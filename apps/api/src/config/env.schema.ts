@@ -17,7 +17,7 @@ export const envSchema = z.object({
   API_PORT: z.coerce.number().int().min(1).max(65535).default(4000),
   WEB_ORIGIN: z.url().default('http://localhost:3000'),
 
-  LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
+  LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
 
   // Infrastructure (obligatoire dès maintenant).
   DATABASE_URL: z.string().regex(/^postgres(ql)?:\/\//, 'doit commencer par postgresql://'),

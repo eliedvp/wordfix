@@ -39,7 +39,10 @@ pnpm infra:up
 pnpm db:validate
 pnpm db:check
 
-# 5. Lancer le site et l'API en mode développement
+# 5. Créer les tables (applique les migrations)
+pnpm db:deploy
+
+# 6. Lancer le site et l'API en mode développement
 pnpm dev
 ```
 
@@ -65,6 +68,29 @@ Puis ouvrez :
 | `pnpm db:check`    | Exécute `SELECT 1` sur la base configurée dans `DATABASE_URL`                   |
 
 Pour lancer un seul paquet : `pnpm --filter @wordfix/api dev` ou `pnpm --filter @wordfix/web dev`.
+
+## Base de données
+
+Le schéma est défini dans `apps/api/prisma/schema.prisma` ; les migrations SQL versionnées sont dans `apps/api/prisma/migrations/`.
+
+- `pnpm db:deploy` applique les migrations en attente (développement et production).
+- `pnpm db:migrate` crée une nouvelle migration après une modification du schéma (développement uniquement).
+- Le client Prisma est généré automatiquement avant `build`, `dev`, `typecheck` et les tests (tâche Turborepo `generate`).
+
+## Tests
+
+| Commande                | Contenu                                                            |
+| ----------------------- | ------------------------------------------------------------------ |
+| `pnpm test`             | Tests unitaires (Vitest), sans base ni Redis                       |
+| `pnpm test:integration` | API complète contre PostgreSQL et Redis réels (Vitest + Supertest) |
+
+Les tests d'intégration utilisent une base **dédiée**, recréée à chaque lancement : par défaut `wordfix_test` sur le PostgreSQL local, et la base Redis n° 15. Créez-la une fois :
+
+```bash
+docker compose exec postgres createdb -U wordfix wordfix_test
+```
+
+Pour utiliser une autre base, définissez `TEST_DATABASE_URL` (son nom doit se terminer par `_test`) et `TEST_REDIS_URL`.
 
 ## Configuration
 

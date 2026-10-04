@@ -1,8 +1,8 @@
 // Schéma Prisma de WordFix.
 //
-// Étape 1 : configuration de base uniquement (générateur + source de données).
-// Les modèles User, Document, DocumentContent, Analysis, AnalysisChunk et Issue
-// sont ajoutés à l'étape 5, avec la première migration.
+// Identifiants : chaînes préfixées générées par l'application (usr_, doc_, ana_,
+// chk_, iss_), aléatoires et non devinables (voir src/common/ids.ts).
+// Les valeurs des énumérations reprennent celles de packages/shared/src/taxonomy.ts.
 
 generator client {
   provider            = "prisma-client"
@@ -13,4 +13,223 @@ generator client {
 
 datasource db {
   provider = "postgresql"
+}
+
+/// Utilisateur. Dans le MVP, uniquement des invités identifiés par un cookie de
+/// session (D3). Les champs email et role préparent les futurs comptes.
+model User {
+  id               String     @id
+  isGuest          Boolean    @default(true)
+  email            String?    @unique
+  role             UserRole   @default(user)
+  /// Empreinte SHA-256 du jeton de session : le jeton lui-même n'est jamais stocké.
+  sessionTokenHash String     @unique
+  createdAt        DateTime   @default(now())
+  lastSeenAt       DateTime   @default(now())
+  documents        Document[]
+
+  @@index([lastSeenAt])
+}
+
+enum UserRole {
+  user
+  admin
+}
+
+/// Document importé. Le fichier source vit dans le stockage privé (24 h max) ;
+/// le texte extrait et les résultats sont supprimés à contentExpiresAt (7 jours).
+model Document {
+  id               String           @id
+  ownerId          String
+  owner            User             @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  /// Nom d'origine, nettoyé, utilisé uniquement pour l'affichage.
+  originalName     String
+  sizeBytes        Int
+  sha256           String
+  /// Clé dans le stockage ; null une fois le fichier supprimé.
+  storageKey       String?
+  wordCount        Int
+  declaredPages    Int?
+  estimatedPages   Int
+  createdAt        DateTime         @default(now())
+  fileExpiresAt    DateTime
+  fileDeletedAt    DateTime?
+  contentExpiresAt DateTime
+  content          DocumentContent?
+  analyses         Analysis[]
+
+  @@index([ownerId, createdAt(sort: Desc)])
+  @@index([fileExpiresAt])
+  @@index([contentExpiresAt])
+}
+
+/// Représentation structurée du document (sections, blocs, ancres), en JSON.
+/// Séparée de Document pour garder ce dernier léger et purger le texte d'un coup.
+model DocumentContent {
+  documentId    String   @id
+  document      Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  parserVersion String
+  model         Json
+  createdAt     DateTime @default(now())
+}
+
+model Analysis {
+  id            String          @id
+  documentId    String
+  document      Document        @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  status        AnalysisStatus  @default(QUEUED)
+  /// Avancement réel, de 0 à 100, calculé à partir des morceaux traités.
+  progress      Int             @default(0)
+  chunksTotal   Int             @default(0)
+  chunksDone    Int             @default(0)
+  score         Int?
+  scoreDetail   Json?
+  /// Codes d'avertissement (analyse partielle, titres déduits…).
+  warnings      Json            @default("[]")
+  promptVersion String
+  modelFast     String?
+  modelSmart    String?
+  tokensIn      Int             @default(0)
+  tokensOut     Int             @default(0)
+  errorCode     String?
+  createdAt     DateTime        @default(now())
+  startedAt     DateTime?
+  completedAt   DateTime?
+  canceledAt    DateTime?
+  chunks        AnalysisChunk[]
+  issues        Issue[]
+
+  @@index([documentId, createdAt(sort: Desc)])
+  @@index([status])
+}
+
+enum AnalysisStatus {
+  QUEUED
+  EXTRACTING
+  ANALYZING_LOCAL
+  ANALYZING_CONTEXT
+  ANALYZING_GLOBAL
+  FINALIZING
+  COMPLETED
+  FAILED
+  CANCELED
+}
+
+/// Un appel IA prévu. Permet de reprendre une analyse interrompue sans repayer
+/// les morceaux déjà traités.
+model AnalysisChunk {
+  id         String        @id
+  analysisId String
+  analysis   Analysis      @relation(fields: [analysisId], references: [id], onDelete: Cascade)
+  stage      ChunkStage
+  index      Int
+  /// Identifiants des blocs couverts par ce morceau.
+  blockIds   Json
+  status     ChunkStatus   @default(PENDING)
+  attempts   Int           @default(0)
+  tokensIn   Int           @default(0)
+  tokensOut  Int           @default(0)
+  issueCount Int           @default(0)
+  /// Résultat intermédiaire réutilisé par l'étape suivante (fiche de section).
+  result     Json?
+  errorCode  String?
+  updatedAt  DateTime      @updatedAt
+
+  @@unique([analysisId, stage, index])
+}
+
+enum ChunkStage {
+  local
+  context
+  global
+  verify
+}
+
+enum ChunkStatus {
+  PENDING
+  DONE
+  FAILED
+}
+
+model Issue {
+  id                 String        @id
+  analysisId         String
+  analysis           Analysis      @relation(fields: [analysisId], references: [id], onDelete: Cascade)
+  category           IssueCategory
+  subtype            String
+  nature             IssueNature
+  severity           IssueSeverity
+  confidence         Confidence
+  source             IssueSource
+  // Localisation (calculée par le backend, jamais par l'IA).
+  blockId            String
+  sectionId          String?
+  sectionPath        String
+  paragraphInSection Int?
+  charStart          Int
+  charEnd            Int
+  estimatedPage      Int?
+  /// Position dans l'ordre de lecture du document, pour le tri.
+  docOrder           Int
+  original           String
+  suggestion         String?
+  explanation        String
+  /// Autres emplacements concernés (cohérence, contradictions).
+  related            Json          @default("[]")
+  status             IssueStatus   @default(open)
+  /// Texte saisi par l'utilisateur quand il modifie la suggestion.
+  userText           String?
+  /// Empreinte de déduplication : un même problème n'est enregistré qu'une fois.
+  fingerprint        String
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+
+  @@unique([analysisId, fingerprint])
+  @@index([analysisId, docOrder])
+  @@index([analysisId, category])
+  @@index([analysisId, status])
+}
+
+enum IssueCategory {
+  spelling
+  grammar
+  punctuation
+  style
+  coherence
+  structure
+}
+
+enum IssueNature {
+  error
+  suggestion
+  potential
+  verify
+}
+
+enum IssueSeverity {
+  minor
+  major
+  critical
+}
+
+enum Confidence {
+  high
+  medium
+  low
+}
+
+enum IssueStatus {
+  open
+  accepted
+  ignored
+  verified
+  edited
+}
+
+enum IssueSource {
+  rules
+  local
+  context
+  global
+  verify
 }
