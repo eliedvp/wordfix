@@ -35,5 +35,15 @@ export default tseslint.config(
       'no-console': 'error',
     },
   },
+  {
+    // Les tests manipulent des réponses HTTP non typées (supertest) : on y tolère `any`.
+    files: ['**/test/**/*.ts', '**/*.spec.ts'],
+    rules: {
+      '@typescript-eslint/no-unsafe-argument': 'off',
+      '@typescript-eslint/no-unsafe-assignment': 'off',
+      '@typescript-eslint/no-unsafe-member-access': 'off',
+      '@typescript-eslint/no-unsafe-call': 'off',
+    },
+  },
   prettier,
 );
