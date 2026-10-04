@@ -1,0 +1,146 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: 22
+
+jobs:
+  # Types, lint, formatage, tests unitaires, d'intégration et E2E, build.
+  quality:
+    name: Qualité et tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: wordfix
+          POSTGRES_PASSWORD: ci_password
+          POSTGRES_DB: wordfix_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U wordfix" --health-interval 5s --health-timeout 3s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://wordfix:ci_password@127.0.0.1:5432/wordfix_test?schema=public
+      SHADOW_DATABASE_URL: postgresql://wordfix:ci_password@127.0.0.1:5432/wordfix_shadow?schema=public
+      REDIS_URL: redis://127.0.0.1:6379
+      TEST_DATABASE_URL: postgresql://wordfix:ci_password@127.0.0.1:5432/wordfix_test?schema=public
+      TEST_REDIS_URL: redis://127.0.0.1:6379/15
+      E2E_DATABASE_URL: postgresql://wordfix:ci_password@127.0.0.1:5432/wordfix_e2e?schema=public
+      E2E_REDIS_URL: redis://127.0.0.1:6379/14
+    steps:
+      - uses: actions/checkout@v5
+      - run: corepack enable
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      - name: Schéma Prisma valide et migrations à jour
+        run: |
+          pnpm db:validate
+          PGPASSWORD=ci_password psql -h 127.0.0.1 -U wordfix -d postgres -c "CREATE DATABASE wordfix_shadow;"
+          pnpm --filter @wordfix/api exec prisma migrate diff \
+            --from-migrations prisma/migrations --to-schema prisma/schema.prisma --exit-code
+
+      - name: Types, lint, formatage
+        run: pnpm check
+
+      - name: Tests unitaires
+        run: pnpm test
+
+      - name: Tests d'intégration (PostgreSQL + Redis)
+        run: pnpm test:integration
+
+      - name: Build
+        run: pnpm build
+
+      - name: Tests E2E (Playwright)
+        run: |
+          pnpm --filter @wordfix/web exec playwright install --with-deps chromium
+          pnpm test:e2e
+
+      - name: Rapport Playwright
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: apps/web/playwright-report
+          retention-days: 7
+
+  # Les étapes du README, exactement : Docker Compose, Prisma, démarrage de l'API.
+  infra:
+    name: Infrastructure locale (Docker Compose)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - run: corepack enable
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: cp .env.example .env
+      - name: PostgreSQL et Redis
+        run: pnpm infra:up
+      - name: Redis configuré pour BullMQ
+        run: docker compose exec -T redis redis-cli config get maxmemory-policy | grep -q noeviction
+      - name: Prisma
+        run: |
+          pnpm db:validate
+          pnpm db:check
+          pnpm db:deploy
+      - name: L'API démarre et voit la base et Redis
+        run: |
+          pnpm build
+          (cd apps/api && node dist/main.js &) 
+          for i in $(seq 1 30); do curl -sf http://127.0.0.1:4000/api/health && exit 0; sleep 1; done
+          exit 1
+
+  secrets:
+    name: Recherche de secrets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_ENABLE_COMMENTS: false
+      - name: Détail des fuites détectées (annotations)
+        if: failure()
+        run: |
+          jq -r '.runs[0].results[] | "::error file=\(.locations[0].physicalLocation.artifactLocation.uri),line=\(.locations[0].physicalLocation.region.startLine)::\(.ruleId)"' results.sarif
+
+  audit:
+    name: Vulnérabilités des dépendances
+    runs-on: ubuntu-latest
+    # Informatif : une vulnérabilité signalée doit être examinée avant la mise en production.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v5
+      - run: corepack enable
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm audit --audit-level high

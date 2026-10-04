@@ -16,6 +16,12 @@ import { AnalysisQueue } from '../queue/analysis.queue.js';
 import { FILE_STORAGE, type FileStorage, sourceKey } from '../storage/file-storage.js';
 
 const HOUR_MS = 60 * 60 * 1000;
+/**
+ * La purge passe toutes les heures : l'échéance est avancée d'un intervalle de
+ * purge pour que les durées annoncées (« au plus tard 24 h », « 7 jours ») soient
+ * toujours respectées, même juste après un passage de la purge.
+ */
+const PURGE_INTERVAL_MS = HOUR_MS;
 
 export interface UploadedDocxFile {
   originalname: string;
@@ -61,8 +67,10 @@ export class DocumentsService {
           wordCount: stats.wordCount,
           declaredPages: stats.declaredPages,
           estimatedPages: stats.estimatedPages,
-          fileExpiresAt: new Date(now + SOURCE_FILE_RETENTION_HOURS * HOUR_MS),
-          contentExpiresAt: new Date(now + CONTENT_RETENTION_DAYS * 24 * HOUR_MS),
+          fileExpiresAt: new Date(now + SOURCE_FILE_RETENTION_HOURS * HOUR_MS - PURGE_INTERVAL_MS),
+          contentExpiresAt: new Date(
+            now + CONTENT_RETENTION_DAYS * 24 * HOUR_MS - PURGE_INTERVAL_MS,
+          ),
         },
       });
       this.logger.log(

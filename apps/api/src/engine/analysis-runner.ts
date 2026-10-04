@@ -479,8 +479,14 @@ export class AnalysisRunner {
       orderBy: { index: 'asc' },
     });
     const noUsage: TokenUsage = { inputTokens: 0, outputTokens: 0, cachedTokens: 0 };
-    // Une seule section : rien à comparer entre parties.
-    if (contextChunks.length < 2) return { issues: [], usage: noUsage, result: { skipped: true } };
+    // Moins de deux sections : rien à comparer entre parties.
+    const sectionCount = contextChunks.reduce(
+      (sum, c) => sum + ((c.result as { sections?: string[] } | null)?.sections?.length ?? 0),
+      0,
+    );
+    if (contextChunks.length === 0 || sectionCount < 2) {
+      return { issues: [], usage: noUsage, result: { skipped: true } };
+    }
 
     const sections = sectionIndex(state.model);
     const sheets = contextChunks.map((c) => {
