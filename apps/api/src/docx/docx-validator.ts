@@ -56,7 +56,7 @@ export async function validateDocx(buffer: Buffer, originalName: string): Promis
     if (wordCount > MAX_DOCUMENT_WORDS) throw new AppError('DOCUMENT_TOO_LONG');
 
     const appXml = await pkg.readOptionalPart('docProps/app.xml', PART_LIMITS.docProps);
-    const declaredPages = parseDeclaredPages(appXml);
+    const declaredPages = plausiblePages(parseDeclaredPages(appXml), wordCount);
     return {
       wordCount,
       declaredPages,
@@ -85,6 +85,17 @@ export function parseDeclaredPages(appXml: string | null): number | null {
   if (!appXml) return null;
   const value = Number(/<Pages>(\d+)<\/Pages>/.exec(appXml)?.[1]);
   return Number.isInteger(value) && value > 0 ? value : null;
+}
+
+/**
+ * Le nombre de pages déclaré par le logiciel d'édition n'est gardé que s'il est
+ * vraisemblable (entre 80 et 900 mots par page) : certains outils écrivent une
+ * valeur par défaut jamais mise à jour.
+ */
+export function plausiblePages(declared: number | null, wordCount: number): number | null {
+  if (!declared) return null;
+  const perPage = wordCount / declared;
+  return perPage >= 80 && perPage <= 900 ? declared : null;
 }
 
 function packageErrorToAppError(error: unknown): AppError {

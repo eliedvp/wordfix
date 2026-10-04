@@ -3,6 +3,7 @@ node_modules/
 
 # Builds
 dist/
+dist-worker/
 .next/
 out/
 .turbo/

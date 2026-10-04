@@ -1,6 +1,6 @@
 import { type Block, type BlockKind, type DocumentModel, PARSER_VERSION } from '@wordfix/shared';
 import { DocxPackage, PART_LIMITS } from '../package-reader.js';
-import { parseDeclaredPages } from '../docx-validator.js';
+import { parseDeclaredPages, plausiblePages } from '../docx-validator.js';
 import { BodyWalker, type RawParagraph } from './body-walker.js';
 import { buildSections } from './sections.js';
 import { StyleMap } from './styles.js';
@@ -162,6 +162,7 @@ class ModelBuilder {
     const bodyBlocks = this.body.map(({ block }) => block);
     const sections = buildSections(bodyBlocks);
     const totalWords = bodyBlocks.reduce((sum, block) => sum + block.wordCount, 0);
+    input = { ...input, declaredPages: plausiblePages(input.declaredPages, totalWords) };
 
     // Pages estimées.
     let pageMethod: DocumentModel['meta']['pageMethod'];

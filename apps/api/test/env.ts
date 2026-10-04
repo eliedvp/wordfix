@@ -7,3 +7,6 @@ process.env.REDIS_URL = TEST_REDIS_URL;
 process.env.WEB_ORIGIN = 'http://localhost:3000';
 process.env.STORAGE_DRIVER = 'local';
 process.env.STORAGE_LOCAL_DIR = `${process.env.TMPDIR ?? '/tmp'}/wordfix-test-storage`;
+process.env.AI_PROVIDER = 'fake';
+process.env.AI_CONCURRENCY = '2';
+process.env.WORKER_CONCURRENCY = '1';
