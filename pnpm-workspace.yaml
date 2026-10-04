@@ -1,0 +1,13 @@
+packages:
+  - apps/*
+  - packages/*
+
+# pnpm 10 n'exécute pas les scripts d'installation des dépendances par défaut.
+# Seuls les paquets listés ici y sont autorisés (moteurs Prisma, binaires natifs).
+onlyBuiltDependencies:
+  - '@prisma/engines'
+  - prisma
+  - esbuild
+  - sharp
+  - unrs-resolver
+  - '@nestjs/core'

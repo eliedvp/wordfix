@@ -1,0 +1,26 @@
+# Dépendances
+node_modules/
+
+# Builds
+dist/
+.next/
+out/
+.turbo/
+*.tsbuildinfo
+coverage/
+
+# Client Prisma généré (recréé par `pnpm db:generate`)
+apps/api/src/generated/
+
+# Secrets : ne jamais committer de fichier .env réel
+.env
+.env.*
+!.env.example
+
+# Stockage local des documents en développement (étape 6)
+apps/api/storage/
+
+# Divers
+.DS_Store
+*.log
+next-env.d.ts

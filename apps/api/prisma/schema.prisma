@@ -1,0 +1,16 @@
+// Schéma Prisma de WordFix.
+//
+// Étape 1 : configuration de base uniquement (générateur + source de données).
+// Les modèles User, Document, DocumentContent, Analysis, AnalysisChunk et Issue
+// sont ajoutés à l'étape 5, avec la première migration.
+
+generator client {
+  provider            = "prisma-client"
+  output              = "../src/generated/prisma"
+  moduleFormat        = "esm"
+  importFileExtension = "js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
