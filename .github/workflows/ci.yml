@@ -45,9 +45,9 @@ jobs:
       E2E_DATABASE_URL: postgresql://wordfix:ci_password@127.0.0.1:5432/wordfix_e2e?schema=public
       E2E_REDIS_URL: redis://127.0.0.1:6379/14
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - run: corepack enable
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
@@ -91,9 +91,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - run: corepack enable
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
@@ -110,7 +110,7 @@ jobs:
           pnpm db:deploy
       - name: L'API démarre et voit la base et Redis
         run: |
-          pnpm --filter @wordfix/api build
+          pnpm build
           (cd apps/api && node dist/main.js &) 
           for i in $(seq 1 30); do curl -sf http://127.0.0.1:4000/api/health && exit 0; sleep 1; done
           exit 1
@@ -119,12 +119,17 @@ jobs:
     name: Recherche de secrets
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
       - uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_ENABLE_COMMENTS: false
+      - name: Détail des fuites détectées (annotations)
+        if: failure()
+        run: |
+          jq -r '.runs[0].results[] | "::error file=\(.locations[0].physicalLocation.artifactLocation.uri),line=\(.locations[0].physicalLocation.region.startLine)::\(.ruleId)"' results.sarif
 
   audit:
     name: Vulnérabilités des dépendances
@@ -132,9 +137,9 @@ jobs:
     # Informatif : une vulnérabilité signalée doit être examinée avant la mise en production.
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - run: corepack enable
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
