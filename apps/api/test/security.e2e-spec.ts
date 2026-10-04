@@ -128,12 +128,12 @@ describe('Cycle de vie des documents', () => {
     const stored = resolve(process.env.STORAGE_LOCAL_DIR ?? '', `documents/${id}/source.docx`);
     const cleanup = new CleanupService(app.get(PrismaService), app.get<FileStorage>(FILE_STORAGE));
 
-    // Avant 24 h : rien ne bouge.
-    await cleanup.run(new Date(Date.now() + 23 * 3600_000));
+    // Avant 23 h : rien ne bouge.
+    await cleanup.run(new Date(Date.now() + 22 * 3600_000));
     expect(existsSync(stored)).toBe(true);
 
-    // Après 24 h : le fichier disparaît, le document reste consultable.
-    const day = await cleanup.run(new Date(Date.now() + 25 * 3600_000));
+    // Un passage de purge à 23 h garantit la suppression avant 24 h.
+    const day = await cleanup.run(new Date(Date.now() + 23 * 3600_000 + 60_000));
     expect(day.filesDeleted).toBe(1);
     expect(existsSync(stored)).toBe(false);
     const after = await agent.get(`/api/documents/${id}`).expect(200);
@@ -142,7 +142,7 @@ describe('Cycle de vie des documents', () => {
     expect(relaunch.body.error.code).toBe('FILE_EXPIRED');
 
     // Après 7 jours : plus aucune trace.
-    const week = await cleanup.run(new Date(Date.now() + 7 * 24 * 3600_000 + 60_000));
+    const week = await cleanup.run(new Date(Date.now() + 7 * 24 * 3600_000 - 3600_000 + 60_000));
     expect(week.documentsDeleted).toBe(1);
     await agent.get(`/api/documents/${id}`).expect(404);
   });
