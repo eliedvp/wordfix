@@ -2,7 +2,7 @@
 
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import type { AnalysisDto, AnalysisStepDto } from '@wordfix/shared';
-import { Check, Circle, LoaderCircle, X } from 'lucide-react';
+import { Check, Circle, Lightbulb, LoaderCircle, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Ring } from '@/components/ui/score-ring';
@@ -69,6 +69,21 @@ export function ProgressView({ analysis }: { analysis: AnalysisDto }) {
           <StepRow key={step.key} step={step} />
         ))}
       </ol>
+
+      <div className="border-hairline bg-surface rounded-card mt-6 flex gap-4 border p-5 shadow-sm">
+        <Lightbulb className="text-brand mt-0.5 size-5 shrink-0" aria-hidden />
+        <div>
+          <h2 className="text-ink font-semibold">
+            Pourquoi cette analyse prend-elle quelques minutes ?
+          </h2>
+          <p className="text-ink-subtle mt-1 text-sm">
+            WordFix relit votre document en plusieurs passes : chaque paragraphe (orthographe,
+            grammaire, style), puis chaque section (transitions, temps, répétitions), puis le
+            document entier pour repérer les contradictions entre les parties. Plus le document est
+            long, plus il y a de parties à relire.
+          </p>
+        </div>
+      </div>
 
       <div className="mt-6 flex justify-center">
         <Button variant="ghost" onClick={() => cancel.mutate()} disabled={cancel.isPending}>
