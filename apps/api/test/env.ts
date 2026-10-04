@@ -5,3 +5,5 @@ process.env.LOG_LEVEL = 'silent';
 process.env.DATABASE_URL = TEST_DATABASE_URL;
 process.env.REDIS_URL = TEST_REDIS_URL;
 process.env.WEB_ORIGIN = 'http://localhost:3000';
+process.env.STORAGE_DRIVER = 'local';
+process.env.STORAGE_LOCAL_DIR = `${process.env.TMPDIR ?? '/tmp'}/wordfix-test-storage`;
