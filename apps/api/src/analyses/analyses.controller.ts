@@ -27,7 +27,7 @@ export class AnalysesController {
     @Param('id', new ParseIdPipe('doc')) documentId: string,
     @Req() req: Request,
   ): Promise<{ analysisId: string }> {
-    return this.analyses.start(await this.userId(req), documentId);
+    return this.analyses.start(await this.userId(req), documentId, req.ip ?? 'unknown');
   }
 
   @Get('analyses/:id')

@@ -14,6 +14,7 @@ import { AnalysesModule } from './analyses/analyses.module.js';
 import { IssuesModule } from './issues/issues.module.js';
 import { QueueModule } from './queue/queue.module.js';
 import { AiUsageModule } from './ai/ai.module.js';
+import { SecurityModule } from './security/security.module.js';
 
 /** Modules d'infrastructure partagés par l'API HTTP et le worker. */
 export const infrastructureImports = [
@@ -41,6 +42,7 @@ export const infrastructureImports = [
     ...infrastructureImports,
     QueueModule,
     AiUsageModule,
+    SecurityModule,
     SessionModule,
     HealthModule,
     DocumentsModule,

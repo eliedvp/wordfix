@@ -17,6 +17,17 @@ export const envSchema = z
     API_HOST: z.string().min(1).default('127.0.0.1'),
     API_PORT: z.coerce.number().int().min(1).max(65535).default(4000),
     WEB_ORIGIN: z.url().default('http://localhost:3000'),
+    /**
+     * Mandataires de confiance pour déterminer l'adresse IP réelle (en-tête
+     * X-Forwarded-For) : « loopback » quand seul Next.js (local) relaie les requêtes.
+     */
+    TRUST_PROXY: z.string().min(1).default('loopback'),
+
+    // Limites d'usage (décision D8).
+    RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(1).default(120),
+    QUOTA_ANALYSES_PER_HOUR: z.coerce.number().int().min(1).default(3),
+    QUOTA_ANALYSES_PER_IP_PER_DAY: z.coerce.number().int().min(1).default(10),
+    QUOTA_UPLOADS_PER_IP_PER_HOUR: z.coerce.number().int().min(1).default(20),
 
     LOG_LEVEL: z
       .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])

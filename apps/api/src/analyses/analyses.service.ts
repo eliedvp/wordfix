@@ -18,6 +18,7 @@ import { LocationResolver } from '../engine/postprocess/location.js';
 import type { Issue, Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { AnalysisQueue } from '../queue/analysis.queue.js';
+import { QuotaService } from '../security/quota.service.js';
 import { toAnalysisDto } from './analysis-mapper.js';
 import type { ListIssuesQuery } from './dto/list-issues.query.js';
 
@@ -31,13 +32,14 @@ export class AnalysesService {
     private readonly prisma: PrismaService,
     private readonly queue: AnalysisQueue,
     private readonly usage: AiUsageService,
+    private readonly quota: QuotaService,
   ) {}
 
   /**
    * Lance l'analyse d'un document (2e temps de l'import). Une seule analyse active
    * par document ; le fichier d'origine doit encore être disponible.
    */
-  async start(ownerId: string, documentId: string): Promise<{ analysisId: string }> {
+  async start(ownerId: string, documentId: string, ip: string): Promise<{ analysisId: string }> {
     const document = await this.prisma.document.findFirst({
       where: { id: documentId, ownerId },
       include: { analyses: { orderBy: { createdAt: 'desc' }, take: 1 } },
@@ -47,6 +49,7 @@ export class AnalysesService {
     if (latest && !isTerminalStatus(latest.status)) throw new AppError('ANALYSIS_IN_PROGRESS');
     if (!document.storageKey || document.fileDeletedAt) throw new AppError('FILE_EXPIRED');
     if (await this.usage.isExhausted()) throw new AppError('AI_BUDGET_EXHAUSTED');
+    await this.quota.assertCanAnalyze(ownerId, ip);
 
     const analysis = await this.prisma.analysis.create({
       data: { id: newId('ana'), documentId, promptVersion: PROMPT_VERSION },
@@ -60,6 +63,7 @@ export class AnalysesService {
       });
       throw error;
     }
+    await this.quota.recordAnalysis(ownerId, ip);
     this.logger.log({ analysisId: analysis.id, documentId }, 'Analyse mise en file');
     return { analysisId: analysis.id };
   }
