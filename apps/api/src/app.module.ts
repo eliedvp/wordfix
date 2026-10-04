@@ -8,6 +8,8 @@ import { HealthModule } from './health/health.module.js';
 import { PrismaModule } from './prisma/prisma.module.js';
 import { RedisModule } from './redis/redis.module.js';
 import { SessionModule } from './session/session.module.js';
+import { StorageModule } from './storage/storage.module.js';
+import { DocumentsModule } from './documents/documents.module.js';
 
 /** Modules d'infrastructure partagés par l'API HTTP et le worker. */
 export const infrastructureImports = [
@@ -27,9 +29,10 @@ export const infrastructureImports = [
   }),
   PrismaModule,
   RedisModule,
+  StorageModule,
 ];
 
 @Module({
-  imports: [...infrastructureImports, SessionModule, HealthModule],
+  imports: [...infrastructureImports, SessionModule, HealthModule, DocumentsModule],
 })
 export class AppModule {}
