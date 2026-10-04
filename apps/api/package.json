@@ -21,7 +21,9 @@
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
     "db:check": "echo \"SELECT 1;\" | prisma db execute --stdin",
-    "sample:generate": "tsx scripts/generate-sample.ts"
+    "sample:generate": "tsx scripts/generate-sample.ts",
+    "fixtures:generate": "tsx scripts/generate-corpus.ts",
+    "eval:quality": "tsx scripts/eval-quality.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1146.0",
