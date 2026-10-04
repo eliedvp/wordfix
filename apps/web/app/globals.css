@@ -1,0 +1,47 @@
+@import 'tailwindcss';
+
+/*
+ * Design system « Academic Precision » (maquette Stitch), version MVP.
+ * Couleur principale verte partout ; les quatre natures de problème ont chacune
+ * leur couleur, toujours accompagnée d'une icône et d'un libellé.
+ */
+@theme {
+  --font-sans: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
+  --font-display: 'Plus Jakarta Sans Variable', ui-sans-serif, system-ui, sans-serif;
+
+  --color-canvas: #f8fafc;
+  --color-surface: #ffffff;
+  --color-ink: #0f172a;
+  --color-ink-muted: #334155;
+  --color-ink-subtle: #64748b;
+  --color-hairline: #e2e8f0;
+  --color-hairline-strong: #cbd5e1;
+
+  --color-brand: #059669;
+  --color-brand-hover: #047857;
+  --color-brand-deep: #065f46;
+  --color-brand-soft: #ecfdf5;
+
+  /* Natures de problème (voir dossier de conception, section 4). */
+  --color-nature-error: #e11d48;
+  --color-nature-error-soft: #fff1f2;
+  --color-nature-suggestion: #d97706;
+  --color-nature-suggestion-soft: #fef3c7;
+  --color-nature-potential: #4f46e5;
+  --color-nature-potential-soft: #eef2ff;
+  --color-nature-verify: #64748b;
+  --color-nature-verify-soft: #f1f5f9;
+
+  --radius-card: 1rem;
+  --radius-control: 0.5rem;
+}
+
+html {
+  color-scheme: light;
+}
+
+body {
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+}
