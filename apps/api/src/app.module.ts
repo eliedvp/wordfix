@@ -10,6 +10,10 @@ import { RedisModule } from './redis/redis.module.js';
 import { SessionModule } from './session/session.module.js';
 import { StorageModule } from './storage/storage.module.js';
 import { DocumentsModule } from './documents/documents.module.js';
+import { AnalysesModule } from './analyses/analyses.module.js';
+import { IssuesModule } from './issues/issues.module.js';
+import { QueueModule } from './queue/queue.module.js';
+import { AiUsageModule } from './ai/ai.module.js';
 
 /** Modules d'infrastructure partagés par l'API HTTP et le worker. */
 export const infrastructureImports = [
@@ -33,6 +37,15 @@ export const infrastructureImports = [
 ];
 
 @Module({
-  imports: [...infrastructureImports, SessionModule, HealthModule, DocumentsModule],
+  imports: [
+    ...infrastructureImports,
+    QueueModule,
+    AiUsageModule,
+    SessionModule,
+    HealthModule,
+    DocumentsModule,
+    AnalysesModule,
+    IssuesModule,
+  ],
 })
 export class AppModule {}

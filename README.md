@@ -9,7 +9,7 @@ Assistant de relecture intelligent pour documents Word longs (rapports de stage,
 | Dossier              | Rôle                                  | Technologies                                      |
 | -------------------- | ------------------------------------- | ------------------------------------------------- |
 | `apps/web`           | Interface utilisateur                 | Next.js 16 (App Router), React 19, Tailwind CSS 4 |
-| `apps/api`           | API REST, puis worker d'analyse       | NestJS 12 (ESM), Prisma 7, pino                   |
+| `apps/api`           | API REST et worker d'analyse          | NestJS 12 (ESM), Prisma 7, pino                   |
 | `packages/shared`    | Constantes, types et schémas partagés | TypeScript                                        |
 | `docker-compose.yml` | Infrastructure locale                 | PostgreSQL 17, Redis 7                            |
 
@@ -53,19 +53,19 @@ Puis ouvrez :
 
 ## Commandes utiles
 
-| Commande           | Effet                                                                           |
-| ------------------ | ------------------------------------------------------------------------------- |
-| `pnpm dev`         | Lance `shared` (compilation continue), l'API (port 4000) et le site (port 3000) |
-| `pnpm build`       | Compile tous les paquets                                                        |
-| `pnpm typecheck`   | Vérifie les types TypeScript (mode strict)                                      |
-| `pnpm lint`        | ESLint sur tous les paquets                                                     |
-| `pnpm format`      | Formate le code avec Prettier                                                   |
-| `pnpm check`       | Types + lint + vérification du formatage (à lancer avant chaque PR)             |
-| `pnpm infra:up`    | Démarre PostgreSQL et Redis et attend qu'ils soient sains                       |
-| `pnpm infra:down`  | Arrête l'infrastructure (les données sont conservées dans les volumes)          |
-| `pnpm db:validate` | Valide le schéma Prisma                                                         |
-| `pnpm db:generate` | Génère le client Prisma (utile à partir de l'étape 5)                           |
-| `pnpm db:check`    | Exécute `SELECT 1` sur la base configurée dans `DATABASE_URL`                   |
+| Commande           | Effet                                                                                                |
+| ------------------ | ---------------------------------------------------------------------------------------------------- |
+| `pnpm dev`         | Lance `shared` (compilation continue), l'API (port 4000), le worker d'analyse et le site (port 3000) |
+| `pnpm build`       | Compile tous les paquets                                                                             |
+| `pnpm typecheck`   | Vérifie les types TypeScript (mode strict)                                                           |
+| `pnpm lint`        | ESLint sur tous les paquets                                                                          |
+| `pnpm format`      | Formate le code avec Prettier                                                                        |
+| `pnpm check`       | Types + lint + vérification du formatage (à lancer avant chaque PR)                                  |
+| `pnpm infra:up`    | Démarre PostgreSQL et Redis et attend qu'ils soient sains                                            |
+| `pnpm infra:down`  | Arrête l'infrastructure (les données sont conservées dans les volumes)                               |
+| `pnpm db:validate` | Valide le schéma Prisma                                                                              |
+| `pnpm db:generate` | Génère le client Prisma (utile à partir de l'étape 5)                                                |
+| `pnpm db:check`    | Exécute `SELECT 1` sur la base configurée dans `DATABASE_URL`                                        |
 
 Pour lancer un seul paquet : `pnpm --filter @wordfix/api dev` ou `pnpm --filter @wordfix/web dev`.
 

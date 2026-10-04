@@ -11,6 +11,8 @@ import { newId } from '../common/ids.js';
 import { validateDocx } from '../docx/docx-validator.js';
 import type { Document } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { summarize } from '../analyses/analysis-mapper.js';
+import { AnalysisQueue } from '../queue/analysis.queue.js';
 import { FILE_STORAGE, type FileStorage, sourceKey } from '../storage/file-storage.js';
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -28,6 +30,7 @@ export class DocumentsService {
   constructor(
     private readonly prisma: PrismaService,
     @Inject(FILE_STORAGE) private readonly storage: FileStorage,
+    private readonly queue: AnalysisQueue,
   ) {}
 
   /**
@@ -90,6 +93,12 @@ export class DocumentsService {
   /** Suppression immédiate et définitive : fichier, texte extrait, analyses, résultats. */
   async delete(ownerId: string, id: string): Promise<void> {
     const document = await this.findOwned(ownerId, id);
+    const active = await this.prisma.analysis.findMany({
+      where: { documentId: id, status: { notIn: ['COMPLETED', 'FAILED', 'CANCELED'] } },
+      select: { id: true },
+    });
+    // Les analyses en cours s'arrêtent : le worker ne trouvera plus le document.
+    for (const analysis of active) await this.queue.removeIfPending(analysis.id);
     if (document.storageKey) await this.storage.delete(document.storageKey);
     await this.prisma.document.delete({ where: { id: document.id } });
     this.logger.log({ documentId: id }, 'Document supprimé à la demande');
@@ -102,8 +111,12 @@ export class DocumentsService {
     return document;
   }
 
-  toDto(document: Document): Promise<DocumentDto> {
-    return Promise.resolve({
+  async toDto(document: Document): Promise<DocumentDto> {
+    const latest = await this.prisma.analysis.findFirst({
+      where: { documentId: document.id },
+      orderBy: { createdAt: 'desc' },
+    });
+    return {
       id: document.id,
       originalName: document.originalName,
       sizeBytes: document.sizeBytes,
@@ -113,7 +126,7 @@ export class DocumentsService {
       fileAvailable: document.storageKey !== null && document.fileDeletedAt === null,
       fileExpiresAt: document.fileExpiresAt.toISOString(),
       contentExpiresAt: document.contentExpiresAt.toISOString(),
-      latestAnalysis: null,
-    });
+      latestAnalysis: latest ? await summarize(this.prisma, latest) : null,
+    };
   }
 }

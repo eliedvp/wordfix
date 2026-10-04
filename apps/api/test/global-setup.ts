@@ -1,7 +1,8 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { Redis } from 'ioredis';
 import pg from 'pg';
-import { TEST_DATABASE_URL } from './test-env.js';
+import { TEST_DATABASE_URL, TEST_REDIS_URL } from './test-env.js';
 
 const MIGRATIONS_DIR = fileURLToPath(new URL('../prisma/migrations/', import.meta.url));
 
@@ -29,5 +30,13 @@ export default async function setup(): Promise<void> {
     }
   } finally {
     await client.end();
+  }
+
+  // Base Redis dédiée aux tests (n° 15 par défaut), vidée à chaque lancement.
+  const redis = new Redis(TEST_REDIS_URL);
+  try {
+    await redis.flushdb();
+  } finally {
+    redis.disconnect();
   }
 }

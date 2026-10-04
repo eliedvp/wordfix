@@ -32,6 +32,11 @@
     "test:integration": {
       "dependsOn": ["^build", "generate"],
       "cache": false
+    },
+    "dev:worker": {
+      "dependsOn": ["^build", "generate"],
+      "cache": false,
+      "persistent": true
     }
   }
 }
