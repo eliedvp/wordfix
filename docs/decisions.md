@@ -69,9 +69,6 @@ Versions choisies à l'installation (octobre 2026), avec la raison quand la vers
 | Polices      | Inter et Plus Jakarta Sans auto-hébergées (`@fontsource-variable`) | Aucune requête vers un service tiers, et un build qui fonctionne sans accès réseau.                                                                                            |
 | API en local | Écoute sur `127.0.0.1:4000` par défaut                             | Conforme à D4 : seul le site est exposé.                                                                                                                                       |
 
-## Décision à prendre avant l'étape 2
+## D12 — Outils de tests (validée)
 
-**D12 — Outil de tests unitaires et d'intégration.** Le cahier des charges cite Jest. NestJS 12 étant en ESM, Jest ne le prend en charge qu'en mode expérimental (`--experimental-vm-modules`), et le modèle officiel NestJS 12 utilise désormais Vitest, dont l'API est compatible avec celle de Jest (`describe`, `it`, `expect`, mocks).
-
-- Option A (recommandée) : **Vitest** pour l'API, `shared` et le site ; Playwright pour les parcours navigateur.
-- Option B : **Jest** en mode ESM expérimental, avec un risque de configuration fragile.
+**Vitest** pour les tests unitaires et d'intégration (API, `shared`, site) et **Playwright** pour les tests E2E dans le navigateur. Jest n'est pas utilisé : NestJS 12 est publié en ESM et Jest ne le prend en charge qu'en mode expérimental. Vitest garde une API compatible avec Jest (`describe`, `it`, `expect`, mocks).
