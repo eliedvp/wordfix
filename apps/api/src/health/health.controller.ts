@@ -1,5 +1,6 @@
 import { createRequire } from 'node:module';
 import { Controller, Get, HttpStatus, Inject, Res } from '@nestjs/common';
+import { SkipThrottle } from '@nestjs/throttler';
 import type { DependencyState, HealthResponse } from '@wordfix/shared';
 import type { Response } from 'express';
 import { Redis } from 'ioredis';
@@ -21,6 +22,7 @@ function withTimeout<T>(promise: Promise<T>): Promise<T> {
 }
 
 /** État de l'API et de ses dépendances (PostgreSQL, Redis). 503 si l'une est indisponible. */
+@SkipThrottle()
 @Controller('health')
 export class HealthController {
   constructor(

@@ -6,8 +6,14 @@ import { PrismaService } from '../src/prisma/prisma.service.js';
 import { WorkerModule } from '../src/worker.module.js';
 
 /** Démarre l'API complète (mêmes modules et même configuration que la production). */
-export async function createTestApp(): Promise<INestApplication> {
-  const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
+export async function createTestApp(
+  overrides: { token: unknown; value: unknown }[] = [],
+): Promise<INestApplication> {
+  let builder = Test.createTestingModule({ imports: [AppModule] });
+  for (const { token, value } of overrides) {
+    builder = builder.overrideProvider(token).useValue(value);
+  }
+  const moduleRef = await builder.compile();
   const app = moduleRef.createNestApplication({ logger: false });
   configureApp(app);
   await app.init();

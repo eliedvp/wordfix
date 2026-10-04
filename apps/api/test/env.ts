@@ -10,3 +10,8 @@ process.env.STORAGE_LOCAL_DIR = `${process.env.TMPDIR ?? '/tmp'}/wordfix-test-st
 process.env.AI_PROVIDER = 'fake';
 process.env.AI_CONCURRENCY = '2';
 process.env.WORKER_CONCURRENCY = '1';
+// Limites larges par défaut ; les tests de quotas les abaissent explicitement.
+process.env.RATE_LIMIT_PER_MINUTE = '100000';
+process.env.QUOTA_ANALYSES_PER_HOUR = '1000';
+process.env.QUOTA_ANALYSES_PER_IP_PER_DAY = '1000';
+process.env.QUOTA_UPLOADS_PER_IP_PER_HOUR = '1000';

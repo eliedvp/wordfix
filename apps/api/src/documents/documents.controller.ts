@@ -16,6 +16,7 @@ import { type DocumentDto, MAX_UPLOAD_BYTES } from '@wordfix/shared';
 import type { Request, Response } from 'express';
 import { AppError } from '../common/errors/app-error.js';
 import { ParseIdPipe } from '../common/pipes/parse-id.pipe.js';
+import { QuotaService } from '../security/quota.service.js';
 import { SessionService } from '../session/session.service.js';
 import { DocumentsService, type UploadedDocxFile } from './documents.service.js';
 
@@ -24,6 +25,7 @@ export class DocumentsController {
   constructor(
     private readonly documents: DocumentsService,
     private readonly session: SessionService,
+    private readonly quota: QuotaService,
   ) {}
 
   /** Import d'un .docx (champ multipart « file »). */
@@ -41,6 +43,7 @@ export class DocumentsController {
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ): Promise<DocumentDto> {
+    await this.quota.consumeUpload(req.ip ?? 'unknown');
     if (!file) throw new AppError('FILE_MISSING');
     return this.documents.create(async () => (await this.session.ensureUser(req, res)).id, file);
   }
