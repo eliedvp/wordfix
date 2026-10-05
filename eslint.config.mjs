@@ -10,6 +10,7 @@ export default tseslint.config(
     ignores: [
       '**/node_modules/**',
       '**/dist/**',
+      '**/dist-worker/**',
       '**/.next/**',
       '**/.turbo/**',
       '**/coverage/**',
@@ -33,6 +34,16 @@ export default tseslint.config(
       '@typescript-eslint/no-floating-promises': 'error',
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
       'no-console': 'error',
+    },
+  },
+  {
+    // Les tests manipulent des réponses HTTP non typées (supertest) : on y tolère `any`.
+    files: ['**/test/**/*.ts', '**/*.spec.ts'],
+    rules: {
+      '@typescript-eslint/no-unsafe-argument': 'off',
+      '@typescript-eslint/no-unsafe-assignment': 'off',
+      '@typescript-eslint/no-unsafe-member-access': 'off',
+      '@typescript-eslint/no-unsafe-call': 'off',
     },
   },
   prettier,

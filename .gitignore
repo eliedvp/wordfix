@@ -3,6 +3,7 @@ node_modules/
 
 # Builds
 dist/
+dist-worker/
 .next/
 out/
 .turbo/
@@ -24,3 +25,8 @@ apps/api/storage/
 .DS_Store
 *.log
 next-env.d.ts
+apps/api/fixtures/
+
+# Rapports Playwright
+apps/web/test-results/
+apps/web/playwright-report/

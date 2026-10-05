@@ -10,7 +10,7 @@ import type { Env } from './env.schema.js';
  * document ne doit apparaître dans les logs. Les champs sensibles connus sont
  * masqués ici ; les modules métier ne journalisent jamais le texte analysé.
  */
-export function buildLoggerParams(env: Env): Params {
+export function buildLoggerParams(env: Pick<Env, 'NODE_ENV' | 'LOG_LEVEL'>): Params {
   const isDev = env.NODE_ENV === 'development';
 
   return {

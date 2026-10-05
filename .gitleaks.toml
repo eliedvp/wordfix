@@ -1,0 +1,8 @@
+# Configuration de la recherche de secrets (CI). Règles par défaut de gitleaks,
+# plus une exception documentée pour un faux positif connu.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Identifiants des cas du corpus de test (« key: '04-beaucoup-fautes' »), pas des secrets"
+paths = ['''apps/api/test/fixtures/corpus\.ts''']

@@ -11,3 +11,22 @@ onlyBuiltDependencies:
   - sharp
   - unrs-resolver
   - '@nestjs/core'
+
+# Correctifs de sécurité de dépendances transitives (pnpm audit), limités à
+# leur parent. Prisma 7.10.0 (dernière version stable) fige ces versions
+# vulnérables ; à retirer dès qu'une version de Prisma les met à jour.
+overrides:
+  # GHSA-ggr8-5vv4-36mx (élevée) : seule la fonction deepmerge() est utilisée,
+  # inchangée en v8 (les changements cassants portent sur deepmergeInto et des types).
+  '@prisma/config>deepmerge-ts': ^8.0.2
+  # GHSA-3f6p-5ww8-9rcr (élevée) et GHSA-rgwj-5xj2-c3m3 (modérée) : même version majeure.
+  'prisma>mysql2': ^3.24.5
+
+# Exception d'audit ciblée, à retirer dès qu'une version corrigée de braces sera publiée.
+auditConfig:
+  ignoreGhsas:
+    # braces (élevée) : aucun correctif publié (toutes les versions <= 3.0.3 sont
+    # concernées). Utilisé uniquement par l'outillage ESLint de développement
+    # (eslint-config-next > @next/eslint-plugin-next > fast-glob > micromatch),
+    # avec des motifs fixés par le projet ; absent des dépendances de production.
+    - GHSA-vfj7-8cjw-p6xm

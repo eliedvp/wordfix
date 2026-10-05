@@ -1,89 +1,101 @@
 # WordFix
 
-Assistant de relecture intelligent pour documents Word longs (rapports de stage, mémoires, thèses, rapports professionnels). WordFix agit comme un **deuxième regard** : il signale ce qui mérite l'attention de l'auteur, en distinguant clairement les erreurs certaines, les suggestions et les points à vérifier.
+Assistant de relecture pour documents Word longs (rapports de stage, mémoires, thèses, rapports professionnels). WordFix agit comme un **deuxième regard** : il signale ce qui mérite l'attention de l'auteur et distingue clairement les **erreurs**, les **suggestions**, les points **à examiner** et les points **à vérifier**. L'auteur garde toujours le dernier mot.
 
-> **État : MVP en construction — étape 1 (fondation technique).** Aucune fonctionnalité métier n'est encore disponible : l'import `.docx`, l'analyse et les résultats arrivent dans les étapes suivantes.
+> **État : MVP complet, en attente de validation locale.** Pas encore déployé en production.
 
-## Architecture
+## Fonctionnement
 
-| Dossier              | Rôle                                  | Technologies                                      |
-| -------------------- | ------------------------------------- | ------------------------------------------------- |
-| `apps/web`           | Interface utilisateur                 | Next.js 16 (App Router), React 19, Tailwind CSS 4 |
-| `apps/api`           | API REST, puis worker d'analyse       | NestJS 12 (ESM), Prisma 7, pino                   |
-| `packages/shared`    | Constantes, types et schémas partagés | TypeScript                                        |
-| `docker-compose.yml` | Infrastructure locale                 | PostgreSQL 17, Redis 7                            |
+```
+Navigateur ──► Site Next.js ──/api/*──► API NestJS ──► PostgreSQL
+                                           │  └─────► Stockage privé (disque / R2)
+                                           ▼
+                                     Redis (BullMQ)
+                                           ▼
+                                   Worker NestJS ──► OpenAI
+```
 
-Le navigateur ne parle qu'au site : les appels `/api/*` sont relayés par Next.js vers l'API NestJS, qui n'écoute qu'en local (décision D4). Les décisions d'architecture validées sont dans [`docs/decisions.md`](docs/decisions.md).
+1. **Import en deux temps** : le fichier est vérifié (structure, taille, sécurité), WordFix affiche son nombre de pages, puis l'utilisateur lance l'analyse.
+2. **Analyse asynchrone** (worker) : lecture structurée du `.docx`, règles déterministes, relecture IA paragraphe par paragraphe, puis par section, puis cohérence du document entier, vérification des contradictions.
+3. **Relecture** : chaque point est localisé (section, paragraphe, page estimée), expliqué, et peut être appliqué (copié), modifié, ignoré ou marqué comme vérifié.
+
+| Dossier              | Rôle                                         | Technologies                         |
+| -------------------- | -------------------------------------------- | ------------------------------------ |
+| `apps/web`           | Interface                                    | Next.js 16, React 19, Tailwind CSS 4 |
+| `apps/api`           | API REST (`main.ts`) et worker (`worker.ts`) | NestJS 12, Prisma 7, BullMQ, OpenAI  |
+| `packages/shared`    | Types, constantes, erreurs, taxonomie        | TypeScript                           |
+| `docker-compose.yml` | Infrastructure locale                        | PostgreSQL 17, Redis 7               |
+
+Documentation : [décisions](docs/decisions.md) · [architecture](docs/architecture.md) · [sécurité](docs/security.md) · [tests](docs/testing.md) · [exploitation](docs/operations.md).
 
 ## Prérequis
 
-- **Node.js 22.12 ou plus récent** (voir `.nvmrc`)
-- **pnpm 10** via Corepack : `corepack enable`
+- **Node.js 22.12 ou plus récent** (voir `.nvmrc`) et **pnpm 10** via Corepack : `corepack enable`
 - **Docker** avec Docker Compose v2
+- Une **clé API OpenAI** pour lancer de vraies analyses
 
 ## Démarrage
 
 ```bash
-# 1. Installer les dépendances
+# 1. Dépendances
 corepack enable
 pnpm install
 
-# 2. Créer votre fichier de configuration local (jamais commité)
+# 2. Configuration locale (jamais commitée)
 cp .env.example .env
-#    puis changez au moins POSTGRES_PASSWORD (et DATABASE_URL en conséquence)
+#    - changez POSTGRES_PASSWORD (et DATABASE_URL en conséquence)
+#    - renseignez OPENAI_API_KEY
 
-# 3. Démarrer PostgreSQL et Redis (attend qu'ils soient prêts)
+# 3. PostgreSQL et Redis (attend qu'ils soient prêts)
 pnpm infra:up
 
-# 4. Vérifier la configuration Prisma et la connexion à la base
+# 4. Vérifier Prisma et créer les tables
 pnpm db:validate
 pnpm db:check
+pnpm db:deploy
 
-# 5. Lancer le site et l'API en mode développement
+# 5. Site, API et worker en mode développement
 pnpm dev
 ```
 
-Puis ouvrez :
+Ouvrez <http://localhost:3000> et cliquez sur « Essayer avec un rapport de stage d'exemple ». L'état de l'API est visible sur <http://localhost:3000/api/health>.
 
-- le site : <http://localhost:3000>
-- l'état de l'API, via le site : <http://localhost:3000/api/health>
+## Commandes
 
-## Commandes utiles
-
-| Commande           | Effet                                                                           |
-| ------------------ | ------------------------------------------------------------------------------- |
-| `pnpm dev`         | Lance `shared` (compilation continue), l'API (port 4000) et le site (port 3000) |
-| `pnpm build`       | Compile tous les paquets                                                        |
-| `pnpm typecheck`   | Vérifie les types TypeScript (mode strict)                                      |
-| `pnpm lint`        | ESLint sur tous les paquets                                                     |
-| `pnpm format`      | Formate le code avec Prettier                                                   |
-| `pnpm check`       | Types + lint + vérification du formatage (à lancer avant chaque PR)             |
-| `pnpm infra:up`    | Démarre PostgreSQL et Redis et attend qu'ils soient sains                       |
-| `pnpm infra:down`  | Arrête l'infrastructure (les données sont conservées dans les volumes)          |
-| `pnpm db:validate` | Valide le schéma Prisma                                                         |
-| `pnpm db:generate` | Génère le client Prisma (utile à partir de l'étape 5)                           |
-| `pnpm db:check`    | Exécute `SELECT 1` sur la base configurée dans `DATABASE_URL`                   |
-
-Pour lancer un seul paquet : `pnpm --filter @wordfix/api dev` ou `pnpm --filter @wordfix/web dev`.
+| Commande                                       | Effet                                                                     |
+| ---------------------------------------------- | ------------------------------------------------------------------------- |
+| `pnpm dev`                                     | `shared` en continu, API (port 4000), worker, site (port 3000)            |
+| `pnpm build`                                   | Compile tous les paquets                                                  |
+| `pnpm check`                                   | Types + lint + formatage (à lancer avant chaque PR)                       |
+| `pnpm test`                                    | Tests unitaires (API, moteur, site)                                       |
+| `pnpm test:integration`                        | API + file + worker + moteur contre PostgreSQL et Redis réels             |
+| `pnpm test:e2e`                                | Parcours complets dans Chromium (après `pnpm build`, API arrêtée)         |
+| `pnpm infra:up` / `pnpm infra:down`            | Démarre / arrête PostgreSQL et Redis                                      |
+| `pnpm db:validate` / `db:check` / `db:deploy`  | Schéma Prisma, connexion à la base, application des migrations            |
+| `pnpm db:migrate`                              | Crée une migration après une modification du schéma (développement)       |
+| `pnpm --filter @wordfix/api fixtures:generate` | Écrit le corpus de test (13 types de documents) dans `apps/api/fixtures/` |
+| `pnpm --filter @wordfix/api eval:quality`      | Mesure la qualité de l'IA réelle sur des fautes connues (stack démarrée)  |
+| `pnpm --filter @wordfix/api sample:generate`   | Régénère le rapport d'exemple de la page d'accueil                        |
 
 ## Configuration
 
-Un seul fichier `.env`, à la racine, lu par Docker Compose, l'API et la CLI Prisma. Toutes les variables sont décrites dans [`.env.example`](.env.example).
+Un seul fichier `.env` à la racine, lu par Docker Compose, l'API, le worker et Prisma ; toutes les variables sont décrites dans [`.env.example`](.env.example).
 
-- L'API **refuse de démarrer** si une variable obligatoire manque ou est invalide, avec un message qui la nomme.
-- Les variables réelles de l'environnement sont prioritaires sur le fichier `.env` (utile en production).
-- Aucune variable n'est exposée au navigateur. N'utilisez jamais le préfixe `NEXT_PUBLIC_` pour un secret.
-- La clé OpenAI (à partir de l'étape 10) ne doit exister que dans votre `.env` local : jamais dans le code, un commit ou un log.
+- L'API et le worker **refusent de démarrer** si une variable est invalide, en la nommant.
+- Les variables d'environnement réelles sont prioritaires sur `.env`.
+- Aucun secret n'est exposé au navigateur ; la clé OpenAI n'est lue que par le worker.
+- `API_INTERNAL_URL` (adresse de l'API vue par Next.js) est figée **au moment du build** du site.
 
 ## Règles du projet
 
-- Chaque étape du plan est développée sur sa propre branche et fusionnée dans `main` par Pull Request, après validation.
-- Aucune fonctionnalité simulée : ce qui est affiché est réellement relié au backend, ou explicitement marqué comme non disponible.
-- Les textes de confidentialité affichés dans l'interface correspondent strictement à ce que le système fait (voir `docs/decisions.md`, P1).
+- `main` est protégée : chaque étape passe par une branche et une Pull Request validée.
+- Aucune fonctionnalité simulée : le fournisseur IA déterministe `fake` n'existe que pour les tests automatisés et est refusé hors `NODE_ENV=test`.
+- Les textes de confidentialité affichés correspondent strictement au comportement du système ([P1](docs/decisions.md)).
 - Les logs ne contiennent jamais de texte de document, de cookie ni de clé.
 
 ## Dépannage
 
-- **Le port 5432 ou 6379 est déjà pris** : changez `POSTGRES_PORT` / `REDIS_PORT` dans `.env`, et mettez à jour `DATABASE_URL` / `REDIS_URL`.
-- **« Configuration invalide » au démarrage de l'API** : le message liste les variables à corriger dans `.env`.
-- **`pnpm install` signale des scripts ignorés** : seuls les paquets listés dans `onlyBuiltDependencies` (`pnpm-workspace.yaml`) peuvent exécuter un script d'installation.
+- **Port 5432 ou 6379 déjà pris** : changez `POSTGRES_PORT` / `REDIS_PORT` dans `.env` et mettez à jour `DATABASE_URL` / `REDIS_URL`.
+- **« Configuration invalide »** : le message liste les variables à corriger.
+- **Le worker s'arrête avec « OPENAI_API_KEY est vide »** : renseignez la clé dans `.env`.
+- **Les analyses restent « En attente »** : le worker n'est pas lancé (`pnpm dev` le démarre ; sinon `pnpm --filter @wordfix/api dev:worker`).

@@ -7,7 +7,7 @@
     "node": ">=22.12.0"
   },
   "scripts": {
-    "dev": "turbo run dev",
+    "dev": "turbo run dev dev:worker",
     "build": "turbo run build",
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
@@ -19,7 +19,12 @@
     "infra:logs": "docker compose logs -f",
     "db:validate": "pnpm --filter @wordfix/api prisma:validate",
     "db:generate": "pnpm --filter @wordfix/api prisma:generate",
-    "db:check": "pnpm --filter @wordfix/api db:check"
+    "db:check": "pnpm --filter @wordfix/api db:check",
+    "test": "turbo run test",
+    "test:integration": "turbo run test:integration",
+    "db:migrate": "pnpm --filter @wordfix/api db:migrate",
+    "db:deploy": "pnpm --filter @wordfix/api db:deploy",
+    "test:e2e": "pnpm --filter @wordfix/web test:e2e"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
