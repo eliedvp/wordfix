@@ -13,6 +13,7 @@ L'hébergement de production n'est pas encore choisi (P2). Ce document liste ce 
 
 - `API_INTERNAL_URL` doit être défini **avant** `pnpm build` si l'API n'est pas sur `http://127.0.0.1:4000`.
 - Plusieurs workers peuvent tourner en parallèle (BullMQ répartit les jobs ; la purge horaire n'est planifiée qu'une fois).
+- **Mémoire du worker** : le dictionnaire orthographique français est chargé au démarrage (≈ 5 s, ≈ 300 Mo de tas, RSS ≈ 700 à 800 Mo en charge). Prévoir au moins **1 Go par worker** ; `start:worker` fixe `--max-old-space-size=1024`. L'API n'est pas concernée. Détail : [`language-engine.md`](language-engine.md#mémoire-et-chargement).
 
 ## Mise à jour
 

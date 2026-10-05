@@ -81,6 +81,12 @@ importers:
       cookie-parser:
         specifier: ^1.4.7
         version: 1.4.7
+      dictionary-en:
+        specifier: 4.0.0
+        version: 4.0.0
+      dictionary-fr:
+        specifier: 3.0.0
+        version: 3.0.0
       fast-xml-parser:
         specifier: ^5.11.2
         version: 5.11.2
@@ -96,6 +102,9 @@ importers:
       nestjs-pino:
         specifier: ^5.3.1
         version: 5.3.1(@nestjs/common@12.1.2(class-transformer@0.5.1)(class-validator@0.15.1)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@12.1.2)(pino-http@11.0.0)(pino@10.4.0)(rxjs@7.8.2)
+      nspell:
+        specifier: 2.1.5
+        version: 2.1.5
       openai:
         specifier: ^7.27.0
         version: 7.27.0(@aws-sdk/credential-provider-node@3.972.84)(@smithy/signature-v4@5.7.4)(undici@8.11.2)(zod@4.6.5)
@@ -139,6 +148,9 @@ importers:
       '@types/node':
         specifier: ^22.15.0
         version: 22.20.5
+      '@types/nspell':
+        specifier: 2.1.6
+        version: 2.1.6
       '@types/pg':
         specifier: ^8.23.1
         version: 8.23.1
@@ -2059,6 +2071,9 @@ packages:
   '@types/node@26.6.4':
     resolution: {integrity: sha512-ldVPDCzj7fsaGZrLB0NuHuTvJcsNasysBAqMolr/cgxrLd1xbqxIr3XJiPnHHJUCxj5sNF1vnRj9aWnrVh5Jcg==}
 
+  '@types/nspell@2.1.6':
+    resolution: {integrity: sha512-PnWYqrBZhkKAreX2kIZDJcBeigZJzXC8VmSuNiXeILUNreczBZHLxGEv/pRT+zL8rsXLxT5bRbiIF9wuh6cGgg==}
+
   '@types/pg@8.23.1':
     resolution: {integrity: sha512-fKVHpikPdg4GKks3JuLEhvwSyvwzF23hnabPy6DD8ljVbC7+6J5dQzdv4arV6jqq57djnMgs1HKBxX4P8aBI3A==}
 
@@ -2884,6 +2899,12 @@ packages:
   dezalgo@1.0.4:
     resolution: {integrity: sha512-rXSP0bf+5n0Qonsb+SVVfNfIsimO4HEtmnIpPHY8Q1UCzKlQrDMfdobr8nJOOsRgWCyMRqeSBQzmWUMq7zvVig==}
 
+  dictionary-en@4.0.0:
+    resolution: {integrity: sha512-3NHnE1uq33ZE/CIwaZ6gqxa4BnglHnxeAcTM0GJ7cmtRGcvX9InMK/IqLtYcUMFCUpUNgybH+DzkqdgAo3F1zg==}
+
+  dictionary-fr@3.0.0:
+    resolution: {integrity: sha512-fhDRX1cRyHPA69GJg8R4XgNYgSQvbNHj3kr5UqvEG1OS5pJqH6P3GbO7wpTCwvr5KMQ0NxGIsXps9P5NyXRVEg==}
+
   dingbat-to-unicode@1.0.2:
     resolution: {integrity: sha512-R0bRerYzy/EZP6QzD3Hkl6JjUDA1Mnn+pd928w0nWjPzihnbAR6dcjGJGiRyznj5E4S1duEKzWrTqw02DPcdzg==}
 
@@ -3535,6 +3556,10 @@ packages:
     resolution: {integrity: sha512-wa56o2/ElJMYqjCjGkXri7it5FbebW5usLw/nPmCMs5DeZ7eziSYZhSmPRn0txqeW4LnAmQQU7FgqLpsEFKM4A==}
     engines: {node: '>= 0.4'}
 
+  is-buffer@2.0.5:
+    resolution: {integrity: sha512-i2R6zNFDwgEHJyQUtJEk0XFi1i0dPFn/oqjK3/vPCcDeJvW5NQ83V8QbicfF1SupOaB0h8ntgBC2YiE7dfyctQ==}
+    engines: {node: '>=4'}
+
   is-bun-module@2.0.0:
     resolution: {integrity: sha512-gNCGbnnnnFAUGKeZ9PdbyeGYJqewpmc2aKHUEMO5nQPWU9lOmv7jcmQIv+qHD8fXW6W7qfuCwX4rY9LNRjXrkQ==}
 
@@ -4129,6 +4154,9 @@ packages:
   node-releases@2.0.57:
     resolution: {integrity: sha512-kQK9LGGFiHtrWiNhZtA7Qbw17AQz+dmsEKODRIVTXA9+e5MS/2gZEBhYJt13GrAz5/IOZKddH/0Z3TP/Zgo+yw==}
     engines: {node: '>=18'}
+
+  nspell@2.1.5:
+    resolution: {integrity: sha512-PSStyugKMiD9mHmqI/CR5xXrSIGejUXPlo88FBRq5Og1kO5QwQ5Ilu8D8O5I/SHpoS+mibpw6uKA8rd3vXd2Sg==}
 
   object-assign@4.1.1:
     resolution: {integrity: sha512-rJgTQnkUnH1sFw8yT6VSU3zD3sWmu6sZhIseY8VX+GRu3P6F7Fu+JNDoXfklElbLJSnc3FUQHVe4cU5hj+BcUg==}
@@ -6930,6 +6958,10 @@ snapshots:
     dependencies:
       undici-types: 8.9.0
 
+  '@types/nspell@2.1.6':
+    dependencies:
+      '@types/node': 22.20.5
+
   '@types/pg@8.23.1':
     dependencies:
       '@types/node': 22.20.5
@@ -7827,6 +7859,10 @@ snapshots:
       asap: 2.0.6
       wrappy: 1.0.2
 
+  dictionary-en@4.0.0: {}
+
+  dictionary-fr@3.0.0: {}
+
   dingbat-to-unicode@1.0.2: {}
 
   doctrine@2.1.0:
@@ -8720,6 +8756,8 @@ snapshots:
       call-bound: 1.0.4
       has-tostringtag: 1.0.2
 
+  is-buffer@2.0.5: {}
+
   is-bun-module@2.0.0:
     dependencies:
       semver: 7.8.5
@@ -9256,6 +9294,10 @@ snapshots:
     optional: true
 
   node-releases@2.0.57: {}
+
+  nspell@2.1.5:
+    dependencies:
+      is-buffer: 2.0.5
 
   object-assign@4.1.1: {}
 

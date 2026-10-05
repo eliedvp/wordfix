@@ -1,11 +1,12 @@
 import type { Block, DocumentModel } from '@wordfix/shared';
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 import { buildDocx, filler, type FixtureNode } from '../../../test/fixtures/builders.js';
 import { parseDocx } from '../../docx/parser/docx-parser.js';
 import { LocationResolver } from '../postprocess/location.js';
 import { materialize } from '../postprocess/materialize.js';
 import { LANGUAGE_ENGINE_CONFIG } from './config.js';
 import { createLanguageEngine } from './language-engine.js';
+import { loadSpellingDictionaries } from './spelling/dictionaries.js';
 
 const engine = createLanguageEngine();
 
@@ -54,6 +55,9 @@ function manualModel(
 }
 
 describe('WordFix Language Engine', () => {
+  // Le dictionnaire français est chargé une fois pour tout le fichier (≈ 5 s).
+  beforeAll(() => loadSpellingDictionaries(), 60_000);
+
   describe('répétitions', () => {
     it('signale un mot écrit deux fois de suite, avec sa correction', async () => {
       const issues = await analyze([

@@ -32,6 +32,7 @@ import {
   LOCAL_INSTRUCTIONS,
   VERIFY_INSTRUCTIONS,
 } from './prompts/prompts.v1.js';
+import { loadSpellingDictionaries } from './language/spelling/dictionaries.js';
 import { runRules } from './rules/rules.js';
 import {
   contextReviewSchema,
@@ -267,6 +268,9 @@ export class AnalysisRunner {
       },
     ];
 
+    // Les dictionnaires sont chargés une seule fois par processus (déjà fait au
+    // démarrage du worker : cet appel ne fait alors qu'attendre la même instance).
+    await loadSpellingDictionaries();
     const ruleIssues = runRules(state.model)
       .map((candidate) => materialize(candidate, state.resolver, state.analysisId))
       .flatMap((result) => (result.ok ? [result.data] : []));

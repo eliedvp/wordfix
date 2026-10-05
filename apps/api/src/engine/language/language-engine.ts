@@ -2,14 +2,21 @@ import type { BlockKind, IssueCategory } from '@wordfix/shared';
 import { confidenceRank } from '../postprocess/nature-policy.js';
 import { RepetitionAnalyzer } from './analyzers/repetition.analyzer.js';
 import { SentenceAnalyzer } from './analyzers/sentence.analyzer.js';
+import { SpellingAnalyzer } from './analyzers/spelling.analyzer.js';
 import { TypographyAnalyzer } from './analyzers/typography.analyzer.js';
 import {
   LANGUAGE_ENGINE_CONFIG,
   type LanguageEngineConfig,
   type LanguageRuleId,
 } from './config.js';
-import { findProtectedRanges } from './text.js';
-import type { AnalyzerContext, LanguageAnalyzer, LanguageInput, LanguageIssue } from './types.js';
+import { findProtectedRanges, WORD_PATTERN } from './text.js';
+import type {
+  AnalyzerContext,
+  DocumentContext,
+  LanguageAnalyzer,
+  LanguageInput,
+  LanguageIssue,
+} from './types.js';
 
 /**
  * WordFix Language Engine : analyse linguistique déterministe et locale.
@@ -33,6 +40,10 @@ export class LanguageEngine {
     const counts = new Map<LanguageRuleId, number>();
     const out: LanguageIssue[] = [];
     const hasDroppedInlineContent = input.meta.skipped.equations > 0;
+    const document: DocumentContext = {
+      wordCounts: countWords(input, this.config),
+      counters: new Map(),
+    };
 
     for (const block of input.blocks) {
       if (block.text.trim().length === 0) continue;
@@ -43,6 +54,7 @@ export class LanguageEngine {
         config: this.config,
         protectedRanges: findProtectedRanges(block.text),
         hasDroppedInlineContent,
+        document,
       };
       const found: LanguageIssue[] = [];
       for (const analyzer of accepting) {
@@ -66,9 +78,31 @@ export class LanguageEngine {
 /** Moteur avec les analyseurs disponibles, dans l'ordre de priorité. */
 export function createLanguageEngine(config: LanguageEngineConfig = LANGUAGE_ENGINE_CONFIG) {
   return new LanguageEngine(
-    [new RepetitionAnalyzer(), new TypographyAnalyzer(), new SentenceAnalyzer()],
+    [
+      new RepetitionAnalyzer(),
+      new SpellingAnalyzer(),
+      new TypographyAnalyzer(),
+      new SentenceAnalyzer(),
+    ],
     config,
   );
+}
+
+/** Occurrences de chaque mot (en minuscules) dans les paragraphes relus : un seul passage. */
+function countWords(input: LanguageInput, config: LanguageEngineConfig): Map<string, number> {
+  const kinds = new Set(config.languageBlockKinds);
+  const counts = new Map<string, number>();
+  for (const block of input.blocks) {
+    if (!kinds.has(block.kind)) continue;
+    for (const match of block.text.matchAll(WORD_PATTERN)) {
+      const word = match[0].toLowerCase();
+      counts.set(word, (counts.get(word) ?? 0) + 1);
+      // « l’informatique » compte aussi pour « informatique ».
+      const elided = /^[\p{L}]{1,7}['’](.+)$/u.exec(word)?.[1];
+      if (elided) counts.set(elided, (counts.get(elided) ?? 0) + 1);
+    }
+  }
+  return counts;
 }
 
 function isValidRange(issue: LanguageIssue, length: number): boolean {
