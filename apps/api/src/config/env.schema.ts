@@ -64,10 +64,7 @@ export const envSchema = z
     WORKER_CONCURRENCY: z.coerce.number().int().min(1).max(16).default(2),
   })
   .superRefine((env, ctx) => {
-    if (
-  env.AI_PROVIDER === 'fake' &&
-  env.NODE_ENV === 'production'
-) {
+    if (env.AI_PROVIDER === 'fake' && env.NODE_ENV === 'production') {
       ctx.addIssue({
         code: 'custom',
         path: ['AI_PROVIDER'],

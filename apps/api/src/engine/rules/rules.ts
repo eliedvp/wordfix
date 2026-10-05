@@ -1,41 +1,27 @@
 import type { Block, DocumentModel } from '@wordfix/shared';
+import { createLanguageEngine } from '../language/language-engine.js';
 import type { CandidateIssue } from '../types.js';
 
 /**
- * Règles déterministes : gratuites, instantanées et fiables. Elles couvrent ce
- * qu'un programme vérifie mieux qu'un modèle (mots doublés, numérotation des
- * titres, sommaire, graphies concurrentes, sigles, phrases très longues).
- * Chaque règle est plafonnée pour ne jamais noyer l'utilisateur.
+ * Règles déterministes : gratuites, instantanées et fiables. Les règles de
+ * langue (mots doublés, typographie, phrases très longues) sont confiées au
+ * WordFix Language Engine (engine/language) ; ce fichier garde les règles qui
+ * portent sur le document entier (numérotation des titres, sommaire, graphies
+ * concurrentes, sigles). Chaque règle est plafonnée pour ne jamais noyer l'utilisateur.
  */
 
-const LANGUAGE_BLOCKS = new Set<Block['kind']>([
-  'paragraph',
-  'list_item',
-  'table_cell',
-  'caption',
-  'footnote',
-  'endnote',
-]);
-const PROSE_BLOCKS = new Set<Block['kind']>(['paragraph', 'list_item', 'footnote', 'endnote']);
-
 export const RULE_CAPS = {
-  repeatedWord: 30,
-  doubleSpace: 10,
-  longSentence: 15,
   headingNumbering: 10,
   acronym: 5,
   terminology: 8,
   toc: 5,
 };
 
-/** Seuil au-delà duquel une phrase est signalée comme très longue. */
-export const LONG_SENTENCE_WORDS = 45;
+const languageEngine = createLanguageEngine();
 
 export function runRules(model: DocumentModel): CandidateIssue[] {
   return [
-    ...repeatedWords(model),
-    ...doubleSpaces(model),
-    ...longSentences(model),
+    ...languageEngine.analyze(model),
     ...headingNumbering(model),
     ...undefinedAcronyms(model),
     ...terminologyVariants(model),
@@ -47,96 +33,6 @@ function issue(
   partial: Omit<CandidateIssue, 'source' | 'relatedBlockIds'> & { relatedBlockIds?: string[] },
 ): CandidateIssue {
   return { source: 'rules', relatedBlockIds: [], ...partial };
-}
-
-// --- Mots doublés : « le le », « de de » ------------------------------------
-
-/** Répétitions légitimes en français (« nous nous sommes », « vous vous êtes »). */
-const ALLOWED_REPEATS = new Set(['nous', 'vous']);
-
-function repeatedWords(model: DocumentModel): CandidateIssue[] {
-  const out: CandidateIssue[] = [];
-  const pattern = /(?<![\p{L}\p{N}])(\p{L}{1,30})[ \u00a0]+(\1)(?![\p{L}\p{N}])/giu;
-  for (const block of model.blocks) {
-    if (!LANGUAGE_BLOCKS.has(block.kind)) continue;
-    for (const match of block.text.matchAll(pattern)) {
-      const word = match[1] ?? '';
-      if (ALLOWED_REPEATS.has(word.toLowerCase())) continue;
-      if (word.toLowerCase() !== (match[2] ?? '').toLowerCase()) continue;
-      const start = match.index;
-      out.push(
-        issue({
-          category: 'spelling',
-          subtype: 'typo',
-          blockId: block.id,
-          original: match[0],
-          suggestion: word,
-          explanation: `Le mot « ${word} » est écrit deux fois de suite.`,
-          severity: 'major',
-          confidence: 'high',
-          range: { start, end: start + match[0].length },
-        }),
-      );
-      if (out.length >= RULE_CAPS.repeatedWord) return out;
-    }
-  }
-  return out;
-}
-
-// --- Espaces doubles entre deux mots ----------------------------------------
-
-function doubleSpaces(model: DocumentModel): CandidateIssue[] {
-  const out: CandidateIssue[] = [];
-  for (const block of model.blocks) {
-    if (!PROSE_BLOCKS.has(block.kind)) continue;
-    for (const match of block.text.matchAll(/(?<=\S) {2,}(?=\S)/g)) {
-      const start = match.index;
-      out.push(
-        issue({
-          category: 'punctuation',
-          subtype: 'spacing',
-          blockId: block.id,
-          original: match[0],
-          suggestion: ' ',
-          explanation: 'Deux espaces se suivent entre ces mots.',
-          severity: 'minor',
-          confidence: 'high',
-          range: { start, end: start + match[0].length },
-        }),
-      );
-      if (out.length >= RULE_CAPS.doubleSpace) return out;
-    }
-  }
-  return out;
-}
-
-// --- Phrases très longues ----------------------------------------------------
-
-function longSentences(model: DocumentModel): CandidateIssue[] {
-  const out: CandidateIssue[] = [];
-  for (const block of model.blocks) {
-    if (!PROSE_BLOCKS.has(block.kind)) continue;
-    for (const sentence of block.sentences) {
-      const text = block.text.slice(sentence.start, sentence.end);
-      const words = text.match(/[\p{L}\p{N}]+(?:['’-][\p{L}\p{N}]+)*/gu)?.length ?? 0;
-      if (words <= LONG_SENTENCE_WORDS) continue;
-      out.push(
-        issue({
-          category: 'style',
-          subtype: 'too_long',
-          blockId: block.id,
-          original: text,
-          suggestion: null,
-          explanation: `Cette phrase compte ${words} mots : la découper pourrait la rendre plus facile à lire.`,
-          severity: 'minor',
-          confidence: 'medium',
-          range: { start: sentence.start, end: sentence.end },
-        }),
-      );
-      if (out.length >= RULE_CAPS.longSentence) return out;
-    }
-  }
-  return out;
 }
 
 // --- Numérotation des titres : 1.2 puis 1.4 ----------------------------------
