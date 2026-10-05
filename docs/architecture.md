@@ -36,6 +36,7 @@ L'API et le worker partagent le même code (`infrastructureImports` dans `app.mo
 ## Moteur et IA
 
 - `ai/ai-provider.ts` : interface unique ; `OpenAiProvider` (Responses API, sortie JSON stricte, `store: false`) ; `FakeAiProvider` réservé aux tests.
+- `engine/language/` : WordFix Language Engine, analyse linguistique déterministe et locale (répétitions, typographie, phrases longues) ; voir [`language-engine.md`](language-engine.md). `engine/rules/rules.ts` l'appelle et garde les règles portant sur le document entier (numérotation, sommaire, sigles, graphies).
 - `engine/schemas.ts` : schémas zod des réponses, convertis en JSON Schema strict (`ai/strict-json-schema.ts`).
 - `engine/prompts/prompts.v1.ts` : consignes versionnées (`PROMPT_VERSION` enregistrée sur chaque analyse).
 - `engine/postprocess/` : ancrage des extraits (rejet si introuvable), nature décidée par le backend, formulation prudente imposée, localisation, déduplication.
