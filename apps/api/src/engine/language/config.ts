@@ -28,6 +28,34 @@ export interface LanguageEngineConfig {
     maxNumericShare: number;
   };
   spelling: SpellingConfig;
+  grammar: GrammarConfig;
+}
+
+/** Sous-types WordFix de la catégorie « grammar » (voir la taxonomie partagée). */
+export type GrammarSubtype = 'agreement' | 'conjugation' | 'syntax' | 'gender_number';
+
+/** Réglages de l'analyseur grammatical (GrammarAnalyzer, moteur Grammalecte). */
+export interface GrammarConfig {
+  /** Types de paragraphes envoyés à Grammalecte : texte rédigé uniquement. */
+  blockKinds: readonly BlockKind[];
+  /**
+   * Options Grammalecte retenues, avec leur sous-type WordFix. Ce sont aussi les
+   * seules options activées dans Grammalecte : orthographe (SPELL), typographie
+   * (apostrophes, espaces insécables…) et style ne sont jamais remontés.
+   */
+  types: Readonly<Record<string, GrammarSubtype>>;
+  /** Options dont une correction unique peut être sûre (accords, conjugaison). */
+  highConfidenceTypes: readonly string[];
+  /**
+   * Homophones grammaticaux courants (son/sont, a/à, ces/ses…) : si l'erreur porte
+   * sur l'un d'eux ou le suit directement, l'erreur peut venir de ce mot plutôt
+   * que de celui que Grammalecte corrige. La correction reste alors une suggestion.
+   */
+  ambiguousWords: readonly string[];
+  /** Paragraphes plus longs ignorés (données, code collé) : en caractères. */
+  maxParagraphLength: number;
+  /** Taille d'un lot envoyé à Grammalecte, en caractères (plusieurs paragraphes par lot). */
+  batchLength: number;
 }
 
 /** Réglages de l'analyseur orthographique (SpellingAnalyzer). */
@@ -68,6 +96,7 @@ export const LANGUAGE_RULE_IDS = [
   'doubled_punctuation',
   'missing_space_after_comma',
   'misspelling',
+  'grammar',
 ] as const;
 export type LanguageRuleId = (typeof LANGUAGE_RULE_IDS)[number];
 
@@ -82,6 +111,7 @@ export const LANGUAGE_ENGINE_CONFIG: LanguageEngineConfig = {
     doubled_punctuation: 10,
     missing_space_after_comma: 10,
     misspelling: 60,
+    grammar: 80,
   },
   repetition: {
     allowedRepeats: ['nous', 'vous'],
@@ -108,5 +138,76 @@ export const LANGUAGE_ENGINE_CONFIG: LanguageEngineConfig = {
     mediumMaxDensity: 3,
     closeWindow: 0.35,
     sameFamilyPrefixRatio: 0.7,
+  },
+  grammar: {
+    blockKinds: ['paragraph', 'list_item', 'footnote', 'endnote'],
+    types: {
+      gn: 'gender_number', // accords en genre et en nombre (« les serveur »)
+      ppas: 'agreement', // participes passés, adjectifs (« ils ont installer »)
+      conj: 'conjugation', // accord sujet-verbe (« ils a »)
+      infi: 'conjugation', // infinitif ou participe (« il faut installé »)
+      imp: 'conjugation', // impératif
+      vmode: 'conjugation', // modes verbaux (subjonctif…)
+      inte: 'syntax', // interrogation
+      conf: 'syntax', // confusions et homophones (a/à, ce/se…)
+      loc: 'syntax', // locutions figées
+    },
+    highConfidenceTypes: ['gn', 'ppas', 'conj', 'infi'],
+    ambiguousWords: [
+      'a',
+      'à',
+      'as',
+      'ont',
+      'on',
+      'son',
+      'sont',
+      'ses',
+      'ces',
+      'c’est',
+      's’est',
+      'sait',
+      'ce',
+      'se',
+      'et',
+      'est',
+      'es',
+      'ou',
+      'où',
+      'leur',
+      'leurs',
+      'la',
+      'là',
+      'l’a',
+      'ma',
+      'm’a',
+      'ta',
+      't’a',
+      'mes',
+      'mais',
+      'peu',
+      'peut',
+      'peux',
+      'quel',
+      'quelle',
+      'quels',
+      'quelles',
+      'qu’elle',
+      'qu’elles',
+      'quand',
+      'quant',
+      'sans',
+      's’en',
+      'dans',
+      'd’en',
+      'ni',
+      'n’y',
+      'si',
+      's’y',
+      'ci',
+      'tout',
+      'tous',
+    ],
+    maxParagraphLength: 20_000,
+    batchLength: 40_000,
   },
 };

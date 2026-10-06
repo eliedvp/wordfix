@@ -62,6 +62,13 @@ export const envSchema = z
 
     // Worker d'analyse.
     WORKER_CONCURRENCY: z.coerce.number().int().min(1).max(16).default(2),
+
+    // Vérification grammaticale (worker) : Grammalecte, exécuté localement par Python 3.
+    GRAMMAR_ENGINE: z.enum(['grammalecte', 'off']).default('grammalecte'),
+    GRAMMALECTE_PYTHON: z
+      .string()
+      .min(1)
+      .default(process.platform === 'win32' ? 'python' : 'python3'),
   })
   .superRefine((env, ctx) => {
     if (env.AI_PROVIDER === 'fake' && env.NODE_ENV === 'production') {

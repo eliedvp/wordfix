@@ -1,5 +1,6 @@
 import type { Block, DocumentModel } from '@wordfix/shared';
 import { createLanguageEngine } from '../language/language-engine.js';
+import type { GrammarFindings } from '../language/types.js';
 import type { CandidateIssue } from '../types.js';
 
 /**
@@ -19,9 +20,15 @@ export const RULE_CAPS = {
 
 const languageEngine = createLanguageEngine();
 
-export function runRules(model: DocumentModel): CandidateIssue[] {
+/** Résultats calculés à l'avance (asynchrones), transmis au moteur de langue. */
+export interface RuleExtras {
+  /** Erreurs Grammalecte par paragraphe ; null ou absent : pas de vérification grammaticale. */
+  grammar?: GrammarFindings | null;
+}
+
+export function runRules(model: DocumentModel, extras: RuleExtras = {}): CandidateIssue[] {
   return [
-    ...languageEngine.analyze(model),
+    ...languageEngine.analyze({ blocks: model.blocks, meta: model.meta, grammar: extras.grammar }),
     ...headingNumbering(model),
     ...undefinedAcronyms(model),
     ...terminologyVariants(model),

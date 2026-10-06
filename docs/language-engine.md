@@ -1,6 +1,6 @@
 # WordFix Language Engine
 
-Le Language Engine est la partie **déterministe** de l'analyse linguistique de WordFix. Il relit le document extrait, paragraphe par paragraphe, et signale les problèmes qu'un programme détecte avec certitude, sans appel réseau ni IA. Il est la fondation du futur correcteur français : de nouveaux analyseurs s'y ajouteront progressivement.
+Le Language Engine est la partie **déterministe** de l'analyse linguistique de WordFix. Il relit le document extrait, paragraphe par paragraphe, et signale les problèmes qu'un programme détecte avec certitude, sans appel réseau ni IA. La grammaire est confiée à [Grammalecte](https://grammalecte.net), exécuté localement dans le worker (voir [Grammaire](#grammaire--grammaranalyzer-grammalecte)). Il est la fondation du futur correcteur français : de nouveaux analyseurs s'y ajouteront progressivement.
 
 Code : `apps/api/src/engine/language/`.
 
@@ -24,32 +24,34 @@ Code : `apps/api/src/engine/language/`.
 ```
 
 - Le moteur tourne pendant la planification : ses résultats sont enregistrés immédiatement, avant les appels IA.
+- Juste avant, la planification fait vérifier la grammaire de tout le document par Grammalecte (processus Python unique du worker, lots de paragraphes) ; les erreurs obtenues sont transmises au moteur, qui reste synchrone. Si Grammalecte est désactivé ou indisponible, l'analyse continue sans vérification grammaticale.
 - Ses problèmes ont la source `rules` (déterministe) ; `local`, `context`, `global` et `verify` désignent l'IA.
 - Quand une règle et l'IA signalent le même endroit (même paragraphe, positions qui se chevauchent, même famille de problème), la finalisation n'en garde qu'un, le plus sûr ; à égalité, celui de la règle.
 - Le moteur ne dépend d'aucun fournisseur d'IA : il fonctionne de la même façon avec OpenAI ou avec `AI_PROVIDER=fake`.
 
 ## Déterministe ou IA
 
-|                   | Language Engine (déterministe)                                                             | Analyse IA                                                                               |
-| ----------------- | ------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------- |
-| Problèmes visés   | Ce qu'une règle détecte avec certitude : mot doublé, espace mal placée, phrase très longue | Ce qui demande du contexte ou du sens : accords, formulations, cohérence, contradictions |
-| Coût, réseau      | Gratuit, local, instantané                                                                 | Appels OpenAI payants                                                                    |
-| Reproductibilité  | Même document, mêmes résultats                                                             | Variable selon le modèle                                                                 |
-| Règle de prudence | Un cas douteux n'est pas signalé                                                           | La nature est bornée par le backend                                                      |
+|                   | Language Engine (déterministe)                                                             | Analyse IA                                                                                       |
+| ----------------- | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------ |
+| Problèmes visés   | Ce qu'une règle détecte avec certitude : mot doublé, espace mal placée, phrase très longue | Ce qui demande du contexte ou du sens : accords ambigus, formulations, cohérence, contradictions |
+| Coût, réseau      | Gratuit, local, instantané                                                                 | Appels OpenAI payants                                                                            |
+| Reproductibilité  | Même document, mêmes résultats                                                             | Variable selon le modèle                                                                         |
+| Règle de prudence | Un cas douteux n'est pas signalé                                                           | La nature est bornée par le backend                                                              |
 
 Dans les deux cas, **la nature** (Erreur, Suggestion, À examiner, À vérifier) est décidée par le backend (`postprocess/nature-policy.ts`) à partir de la catégorie, de la confiance et de la présence d'une correction, jamais par l'analyseur lui-même.
 
 ## Analyseurs disponibles
 
-| Analyseur            | Règle                       | Exemple                            | Catégorie / sous-type     | Confiance → nature                                     |
-| -------------------- | --------------------------- | ---------------------------------- | ------------------------- | ------------------------------------------------------ |
-| `RepetitionAnalyzer` | `repeated_word`             | « permet permet » → « permet »     | spelling / typo           | élevée + correction → Erreur                           |
-| `SpellingAnalyzer`   | `misspelling`               | « Informatiue » → « Informatique » | spelling / misspelling    | élevée → Erreur ; moyenne → Suggestion ; faible → rien |
-| `TypographyAnalyzer` | `double_space`              | deux espaces entre deux mots       | punctuation / spacing     | élevée, sans correction → Suggestion                   |
-|                      | `space_before_punctuation`  | « serveur , » → « serveur, »       | punctuation / spacing     | élevée + correction → Erreur                           |
-|                      | `doubled_punctuation`       | « ,, » → « , »                     | punctuation / punctuation | élevée + correction → Erreur                           |
-|                      | `missing_space_after_comma` | « rouge,vert » → « rouge, vert »   | punctuation / spacing     | élevée + correction → Erreur                           |
-| `SentenceAnalyzer`   | `long_sentence`             | phrase de plus de 45 mots          | style / too_long          | moyenne → Suggestion                                   |
+| Analyseur            | Règle                       | Exemple                            | Catégorie / sous-type                                   | Confiance → nature                                                    |
+| -------------------- | --------------------------- | ---------------------------------- | ------------------------------------------------------- | --------------------------------------------------------------------- |
+| `RepetitionAnalyzer` | `repeated_word`             | « permet permet » → « permet »     | spelling / typo                                         | élevée + correction → Erreur                                          |
+| `SpellingAnalyzer`   | `misspelling`               | « Informatiue » → « Informatique » | spelling / misspelling                                  | élevée → Erreur ; moyenne → Suggestion ; faible → rien                |
+| `GrammarAnalyzer`    | `grammar`                   | « Les serveur » → « serveurs »     | grammar / gender_number, agreement, conjugation, syntax | élevée → Erreur ; moyenne → Suggestion ; sans correction → À vérifier |
+| `TypographyAnalyzer` | `double_space`              | deux espaces entre deux mots       | punctuation / spacing                                   | élevée, sans correction → Suggestion                                  |
+|                      | `space_before_punctuation`  | « serveur , » → « serveur, »       | punctuation / spacing                                   | élevée + correction → Erreur                                          |
+|                      | `doubled_punctuation`       | « ,, » → « , »                     | punctuation / punctuation                               | élevée + correction → Erreur                                          |
+|                      | `missing_space_after_comma` | « rouge,vert » → « rouge, vert »   | punctuation / spacing                                   | élevée + correction → Erreur                                          |
+| `SentenceAnalyzer`   | `long_sentence`             | phrase de plus de 45 mots          | style / too_long                                        | moyenne → Suggestion                                                  |
 
 ### Garde-fous contre les faux positifs
 
@@ -60,7 +62,7 @@ Dans les deux cas, **la nature** (Erreur, Suggestion, À examiner, À vérifier)
 - Phrases longues : énumérations (points-virgules) et phrases surtout numériques ignorées.
 - Un même endroit n'est signalé qu'une fois ; chaque règle est plafonnée par document.
 
-Non traité volontairement à ce stade : accords et conjugaison, mots composés mal orthographiés, espaces avant « ; : ! ? » (conventions différentes selon les pays), guillemets et apostrophes.
+Non traité volontairement à ce stade : mots composés mal orthographiés, espaces avant « ; : ! ? » (conventions différentes selon les pays), guillemets et apostrophes.
 
 ## Orthographe : SpellingAnalyzer
 
@@ -124,9 +126,79 @@ Mesures sur Node.js 22 (worker réel, fournisseur d'IA de test) :
 - 60 000 mots : moins de 0,5 s pour l'orthographe (test), ≈ 1,2 à 1,6 s d'analyse complète avec l'IA de test.
 - Au plus 200 mots inconnus distincts interrogés par document (`maxSuggestionLookups`), 60 signalements d'orthographe au plus.
 
+## Grammaire : GrammarAnalyzer (Grammalecte)
+
+Code : `analyzers/grammar.analyzer.ts`, `grammar/` ; moteur : `apps/api/vendor/grammalecte/` (provenance, construction et empreintes dans son [README](../apps/api/vendor/grammalecte/README.md)).
+
+### Fonctionnement
+
+```
+worker (Node.js)                                   processus Python (GPL-3.0)
+GrammarPreloadService ── lancement au démarrage ──► bridge.py + grammalecte-2.3.0.zip (règles chargées une fois)
+AnalysisRunner.plan()
+  └ checkDocumentGrammar : lots de ≈ 40 000 caractères ──JSON stdin──► Grammalecte (options de grammaire seules)
+                           erreurs par paragraphe     ◄─JSON stdout──
+  └ runRules(model, { grammar }) → GrammarAnalyzer : filtrage, confiance → LanguageIssue
+```
+
+- **Une seule instance par worker**, lancée au démarrage (≈ 1 s) et réutilisée pour tous les documents ; les lots sont traités l'un après l'autre (file d'attente), jamais par plusieurs processus.
+- **Jamais phrase par phrase** : les paragraphes rédigés (paragraphes, puces, notes) sont envoyés par lots ; un document de 60 000 mots représente une dizaine de requêtes.
+- **Aucun appel réseau** ; le texte n'est ni écrit sur disque ni journalisé ; le processus Python reçoit un environnement minimal (aucun secret du worker).
+- **Positions exactes** : Grammalecte compte en points de code ; le pont convertit en unités UTF-16 (comme les chaînes JavaScript), et chaque position est revérifiée dans le texte du paragraphe avant d'être retenue.
+- **Robustesse** : délai maximal par lot (60 s) ; en cas de dépassement ou d'arrêt, le processus est relancé à la demande suivante. Si Python est absent, le worker démarre quand même (erreur journalisée) et les analyses se font sans grammaire.
+- Réglages : `GRAMMAR_ENGINE=grammalecte|off` et `GRAMMALECTE_PYTHON` (interpréteur, `python3` par défaut ; `python` sous Windows).
+
+### Filtrage (faux positifs)
+
+| Retenu (options Grammalecte → sous-type WordFix)                                                                          | Jamais remonté                                                                                                                                      |
+| ------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `gn` → gender_number ; `ppas` → agreement ; `conj`, `infi`, `imp`, `vmode` → conjugation ; `conf`, `loc`, `inte` → syntax | orthographe (`SPELL`, traitée par le SpellingAnalyzer), typographie (apostrophes droites, espaces insécables, majuscules…), style, règles sans type |
+
+Seules les options retenues sont activées dans Grammalecte (plus rapide). Ensuite :
+
+- un passage d'**un seul mot** qui ressemble à un nom propre, un sigle ou un terme technique (Kouassi, Ouattara en milieu de phrase, REST, VLAN, GitHub, TypeScript, mot avec chiffre, terme de la liste technique) n'est jamais signalé ; sans correction proposée, un passage qui en contient un est écarté ;
+- une « correction » qui ne change que la typographie (apostrophe, espace, tiret) est écartée ;
+- zones protégées (URL, e-mails, chemins) respectées ;
+- **doublons** : même zone et même sous-type → une seule remarque ; les corrections alternatives d'une même règle (« Ils a » → « ont » ou « Il ») sont regroupées en une remarque qui cite l'autre possibilité ; une faute déjà signalée au même endroit par l'orthographe n'est pas doublée.
+
+### Confiance → nature
+
+La nature reste décidée par la politique centrale (`nature-policy.ts`) :
+
+| Cas                                                                                                  | Confiance | Nature     |
+| ---------------------------------------------------------------------------------------------------- | --------- | ---------- |
+| Une seule correction, règle d'accord ou de conjugaison (`gn`, `ppas`, `conj`, `infi`)                | élevée    | Erreur     |
+| Plusieurs corrections, confusion (a/à…), locution, mode, ou faute voisine d'un homophone (son/sont…) | moyenne   | Suggestion |
+| Aucune correction proposée (« une belle projet »)                                                    | faible    | À vérifier |
+
+« Les serveur » → Erreur ; « on terminé » (termine ? terminait ? a terminé ?) → Suggestion ; « il va a Paris » → Suggestion.
+
+### Mémoire et performance
+
+| Mesure (Linux, Python 3.12)                 | Valeur                                 |
+| ------------------------------------------- | -------------------------------------- |
+| Lancement (chargement des règles)           | ≈ 0,8 à 1 s, une fois par worker       |
+| Mémoire du processus Python après lancement | ≈ 80 Mo                                |
+| Après un premier document de 60 000 mots    | ≈ 310 Mo, stable ensuite (4 documents) |
+| Vérification de 60 000 mots                 | ≈ 11 à 14 s (≈ 12,6 s dans le test)    |
+
+Le processus Python s'ajoute au worker Node.js : prévoir **≈ 1,2 Go par worker** au total. Le cache de formes de Grammalecte est vidé au-delà de 100 000 formes.
+
+### Licence de Grammalecte (GPL-3.0)
+
+Grammalecte est distribué sous **GNU GPL v3** (pas l'AGPL). Conséquences pour WordFix :
+
+- **Service en ligne (SaaS)** : faire tourner Grammalecte sur nos serveurs pour analyser les documents des utilisateurs n'est pas une « transmission » (_convey_) au sens de la GPL v3 : aucune obligation de publier le code de WordFix. La GPL v3, contrairement à l'AGPL, ne s'applique pas à l'usage via le réseau. **Aucun blocage pour le service actuel.**
+- **Séparation** : Grammalecte n'est pas chargé dans le processus Node.js. Il tourne dans un programme distinct (`bridge.py`, lui-même sous GPL-3.0-or-later), qui échange uniquement des messages JSON par entrée/sortie standard — une communication « à distance » entre programmes séparés, et non une liaison dans un même programme. Le code TypeScript de WordFix reste sous sa propre licence.
+- **Le dépôt** contient l'archive de Grammalecte, son texte de licence, sa provenance et sa méthode de construction (dossier `vendor/grammalecte/`). Aucun fichier de Grammalecte n'est modifié.
+- **Si WordFix était un jour distribué** (version installable, sur site, application de bureau, image Docker remise à un client) : il faudrait fournir Grammalecte et `bridge.py` avec la licence GPL v3 et leur code source correspondant (ou une offre écrite), et ne pas restreindre les droits du destinataire sur ces composants. La séparation en processus distinct permet de garder le reste de WordFix hors de la GPL, sous réserve de l'analyse d'un juriste au moment de la distribution.
+- Rien de Grammalecte n'est envoyé au navigateur.
+
+Ce point est une analyse technique, pas un avis juridique : à faire valider avant toute distribution du logiciel (hors SaaS).
+
 ## Configuration
 
-Tous les seuils sont dans `engine/language/config.ts` (`LANGUAGE_ENGINE_CONFIG`) : types de paragraphes analysés, plafonds par règle, exceptions de répétition, seuil de phrase longue, détection des énumérations, et pour l'orthographe (`spelling`) longueurs de mots, nombre de suggestions examinées, budget de recherches, seuil de répétition, coûts et écarts de confiance. Un moteur avec d'autres réglages s'obtient par `createLanguageEngine(config)`.
+Tous les seuils sont dans `engine/language/config.ts` (`LANGUAGE_ENGINE_CONFIG`) : types de paragraphes analysés, plafonds par règle, exceptions de répétition, seuil de phrase longue, détection des énumérations, pour l'orthographe (`spelling`) longueurs de mots, nombre de suggestions examinées, budget de recherches, seuil de répétition, coûts et écarts de confiance, et pour la grammaire (`grammar`) options Grammalecte retenues et leur sous-type, options à confiance élevée, homophones, taille des lots. Un moteur avec d'autres réglages s'obtient par `createLanguageEngine(config)`.
 
 ## Ajouter un analyseur
 
@@ -147,5 +219,7 @@ pnpm test:integration                                                   # pipeli
 ```
 
 `analyzers/spelling.analyzer.spec.ts` couvre l'orthographe (mots corrects, fautes inconnues, noms propres, sigles, URL, e-mails, chemins, termes techniques, casse, accents, plusieurs fautes, doublons, 60 000 mots, chargement unique du dictionnaire). Les tests qui utilisent le moteur chargent les dictionnaires une fois par fichier (≈ 5 s).
+
+`analyzers/grammar.analyzer.spec.ts` lance le vrai Grammalecte (Python 3 requis) : « Les serveur », « on terminé », a/à, « une belle projet », participes, accords sujet-verbe, alternatives regroupées, homophones, positions exactes (y compris après un emoji), aucun faux positif sur noms propres et termes techniques, apostrophes droites, document propre, compatibilité avec le pipeline et 60 000 mots. `grammar/mapping.spec.ts` teste le filtrage seul, `grammar/grammalecte-client.spec.ts` le processus (lancement unique, délai dépassé et relance, Python absent), `grammar/check-document.spec.ts` le découpage en lots. `test/grammar.e2e-spec.ts` couvre la chaîne complète DOCX → extraction → Grammalecte → remarques de l'API.
 
 `language-engine.spec.ts` couvre les répétitions, les phrases longues, la typographie, les garde-fous, la localisation multi-paragraphes, les plafonds, la compatibilité avec le pipeline (nature décidée par le backend) et la performance sur 60 000 mots.

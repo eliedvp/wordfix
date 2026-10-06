@@ -1,5 +1,6 @@
 import type { BlockKind, IssueCategory } from '@wordfix/shared';
 import { confidenceRank } from '../postprocess/nature-policy.js';
+import { GrammarAnalyzer } from './analyzers/grammar.analyzer.js';
 import { RepetitionAnalyzer } from './analyzers/repetition.analyzer.js';
 import { SentenceAnalyzer } from './analyzers/sentence.analyzer.js';
 import { SpellingAnalyzer } from './analyzers/spelling.analyzer.js';
@@ -43,6 +44,7 @@ export class LanguageEngine {
     const document: DocumentContext = {
       wordCounts: countWords(input, this.config),
       counters: new Map(),
+      grammar: input.grammar ?? null,
     };
 
     for (const block of input.blocks) {
@@ -81,6 +83,7 @@ export function createLanguageEngine(config: LanguageEngineConfig = LANGUAGE_ENG
     [
       new RepetitionAnalyzer(),
       new SpellingAnalyzer(),
+      new GrammarAnalyzer(),
       new TypographyAnalyzer(),
       new SentenceAnalyzer(),
     ],

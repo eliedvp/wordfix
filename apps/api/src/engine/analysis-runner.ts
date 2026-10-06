@@ -32,7 +32,10 @@ import {
   LOCAL_INSTRUCTIONS,
   VERIFY_INSTRUCTIONS,
 } from './prompts/prompts.v1.js';
+import { checkDocumentGrammar } from './language/grammar/check-document.js';
+import { getGrammalecte } from './language/grammar/grammalecte-client.js';
 import { loadSpellingDictionaries } from './language/spelling/dictionaries.js';
+import type { GrammarFindings } from './language/types.js';
 import { runRules } from './rules/rules.js';
 import {
   contextReviewSchema,
@@ -99,6 +102,7 @@ export class AnalysisRunner {
   private readonly concurrency: number;
   private readonly modelFast: string;
   private readonly modelSmart: string;
+  private readonly grammarEnabled: boolean;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -110,6 +114,7 @@ export class AnalysisRunner {
     this.concurrency = config.get('AI_CONCURRENCY', { infer: true });
     this.modelFast = config.get('AI_MODEL_FAST', { infer: true });
     this.modelSmart = config.get('AI_MODEL_SMART', { infer: true });
+    this.grammarEnabled = config.get('GRAMMAR_ENGINE', { infer: true }) === 'grammalecte';
   }
 
   async run(analysisId: string): Promise<void> {
@@ -271,7 +276,8 @@ export class AnalysisRunner {
     // Les dictionnaires sont chargés une seule fois par processus (déjà fait au
     // démarrage du worker : cet appel ne fait alors qu'attendre la même instance).
     await loadSpellingDictionaries();
-    const ruleIssues = runRules(state.model)
+    const grammar = await this.checkGrammar(state);
+    const ruleIssues = runRules(state.model, { grammar })
       .map((candidate) => materialize(candidate, state.resolver, state.analysisId))
       .flatMap((result) => (result.ok ? [result.data] : []));
 
@@ -286,6 +292,33 @@ export class AnalysisRunner {
         },
       }),
     ]);
+  }
+
+  /**
+   * Vérification grammaticale du document par Grammalecte (processus unique du
+   * worker, lots de paragraphes). En cas d'échec, l'analyse continue sans elle :
+   * les autres vérifications ne doivent pas en dépendre.
+   */
+  private async checkGrammar(state: RunState): Promise<GrammarFindings | null> {
+    if (!this.grammarEnabled) return null;
+    const startedAt = Date.now();
+    try {
+      const findings = await checkDocumentGrammar(getGrammalecte(), state.model);
+      this.logger.log(
+        { analysisId: state.analysisId, durationMs: Date.now() - startedAt, blocks: findings.size },
+        'Vérification grammaticale terminée',
+      );
+      return findings;
+    } catch (error) {
+      this.logger.warn(
+        {
+          analysisId: state.analysisId,
+          err: error instanceof Error ? error.message : String(error),
+        },
+        'Vérification grammaticale impossible : analyse poursuivie sans elle',
+      );
+      return null;
+    }
   }
 
   // --- Exécution des morceaux --------------------------------------------------
