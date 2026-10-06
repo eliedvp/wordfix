@@ -11,8 +11,13 @@ export interface LanguageEngineConfig {
   languageBlockKinds: readonly BlockKind[];
   /** Types de paragraphes rédigés en phrases (longueur, espaces). */
   proseBlockKinds: readonly BlockKind[];
-  /** Nombre maximal de signalements par règle et par document. */
+  /**
+   * Nombre maximal de signalements par règle et par document : au moins `caps`,
+   * puis proportionnel à la longueur (`capsPerThousandWords` signalements pour
+   * 1 000 mots), pour qu'un long mémoire ne perde pas ses dernières fautes.
+   */
   caps: Readonly<Record<LanguageRuleId, number>>;
+  capsPerThousandWords: Readonly<Record<LanguageRuleId, number>>;
   repetition: {
     /** Mots qui se répètent légitimement (« nous nous sommes », « vous vous êtes »). */
     allowedRepeats: readonly string[];
@@ -64,12 +69,29 @@ export interface SpellingConfig {
   minWordLength: number;
   /** Longueur maximale d'un mot vérifié (au-delà : chaîne technique). */
   maxWordLength: number;
-  /** Mots inconnus distincts pour lesquels on demande des suggestions, par document. */
+  /** Mots inconnus distincts pour lesquels on demande des suggestions, par document (minimum). */
   maxSuggestionLookups: number;
+  /** Recherches supplémentaires pour 1 000 mots (plafond proportionnel à la longueur). */
+  suggestionLookupsPerThousandWords: number;
   /** Nombre de suggestions de nspell examinées pour un mot. */
   maxCandidates: number;
-  /** Un mot inconnu présent au moins ce nombre de fois est considéré comme voulu. */
+  /**
+   * Un mot inconnu présent au moins ce nombre de fois est considéré comme voulu
+   * (nom, terme du domaine), sauf s'il est en minuscules et à une faute légère
+   * (`repeatedMaxCost`) d'un mot courant (`repeatedMinZipf`) : c'est alors une
+   * faute systématique, signalée comme Suggestion.
+   */
   repeatedUnknownThreshold: number;
+  repeatedMaxCost: number;
+  repeatedMinZipf: number;
+  /** Poids de la fréquence (échelle Zipf) dans le classement des corrections. */
+  frequencyWeight: number;
+  /**
+   * Conditions d'une correction présentée comme certaine (Erreur) : une seule
+   * modification élémentaire au plus (`highMaxCost`) vers un mot courant (`highMinZipf`).
+   */
+  highMaxCost: number;
+  highMinZipf: number;
   /** Coût maximal (distance pondérée) d'une correction acceptée. */
   maxCost: number;
   /** Coût maximal pour les mots courts (au plus `shortWordLength` lettres). */
@@ -80,6 +102,8 @@ export interface SpellingConfig {
   mediumMargin: number;
   /** Candidats « plausibles » : coût au plus `densityCost`. Au-delà de ces nombres, trop d'ambiguïté. */
   densityCost: number;
+  /** Écart de score au-delà duquel un candidat ne compte plus comme concurrent plausible. */
+  densityWindow: number;
   highMaxDensity: number;
   mediumMaxDensity: number;
   /** Fenêtre de coût des candidats jugés aussi proches que le meilleur. */
@@ -113,6 +137,16 @@ export const LANGUAGE_ENGINE_CONFIG: LanguageEngineConfig = {
     misspelling: 60,
     grammar: 80,
   },
+  capsPerThousandWords: {
+    repeated_word: 1,
+    long_sentence: 0.5,
+    double_space: 0.5,
+    space_before_punctuation: 0.5,
+    doubled_punctuation: 0.5,
+    missing_space_after_comma: 0.5,
+    misspelling: 5,
+    grammar: 5,
+  },
   repetition: {
     allowedRepeats: ['nous', 'vous'],
     maxWordLength: 30,
@@ -126,14 +160,21 @@ export const LANGUAGE_ENGINE_CONFIG: LanguageEngineConfig = {
     minWordLength: 4,
     maxWordLength: 30,
     maxSuggestionLookups: 200,
+    suggestionLookupsPerThousandWords: 10,
     maxCandidates: 8,
     repeatedUnknownThreshold: 3,
+    repeatedMaxCost: 0.5,
+    repeatedMinZipf: 3.5,
+    frequencyWeight: 0.15,
+    highMaxCost: 1,
+    highMinZipf: 3,
     maxCost: 1.3,
     maxCostShortWord: 0.8,
     shortWordLength: 5,
     highMargin: 0.5,
     mediumMargin: 0.15,
     densityCost: 1.3,
+    densityWindow: 0.8,
     highMaxDensity: 2,
     mediumMaxDensity: 3,
     closeWindow: 0.35,

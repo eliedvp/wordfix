@@ -252,4 +252,103 @@ describe('SpellingAnalyzer (orthographe française)', () => {
       expect(dictionaryLoadStats().loads).toBe(1);
     });
   });
+
+  describe('calibration : fréquence, accents, noms, rectifications, répétitions, confiance', () => {
+    const detail = (issues: Awaited<ReturnType<typeof spelling>>) =>
+      issues.map((i) => [i.original, i.suggestion, i.confidence]);
+
+    it('la fréquence départage des corrections aussi proches (reçu plutôt que revu)', async () => {
+      expect(detail(await spelling('Le colis a été recu hier matin.'))).toEqual([
+        ['recu', 'reçu', 'medium'],
+      ]);
+      const dictionaries = getSpellingDictionaries();
+      const ranked = rankCandidates(
+        'recu',
+        ['revu', 'reçu', 'recul'],
+        dictionaries.frequency,
+        LANGUAGE_ENGINE_CONFIG.spelling.frequencyWeight,
+      );
+      expect(ranked[0]?.word).toBe('reçu');
+      expect(dictionaries.frequency.of('budget')).toBeGreaterThan(
+        dictionaries.frequency.of('auget') ?? 0,
+      );
+    });
+
+    it('un accent oublié passe avant la reconnaissance des anglicismes', async () => {
+      expect(
+        detail(await spelling('Une evolution notable des differents services de la region.')),
+      ).toEqual([
+        ['evolution', 'évolution', 'medium'],
+        ['differents', 'différents', 'medium'],
+        ['region', 'région', 'medium'],
+      ]);
+      expect(
+        await spelling('Le feedback de la team a été discuté au meeting avec le manager.'),
+      ).toEqual([]);
+    });
+
+    it('protège les noms propres après un titre ou des initiales', async () => {
+      expect(
+        await spelling(
+          'Nous remercions M. Ehui, Mme Gagnoa et le Pr. Moussavi pour leur aide.',
+          'Le rapport a été relu par J.-P. Assinie, puis par Dr Kouakou et M. Kouassi Yao.',
+        ),
+      ).toEqual([]);
+    });
+
+    it('accepte les graphies rectifiées de 1990, pas les fautes voisines', async () => {
+      expect(
+        await spelling(
+          'Il faut connaitre les règles, maitriser les outils et suivre un entrainement.',
+          'Il parait que cet évènement règlementaire aura lieu en aout.',
+          'Sa réponse ambigüe a surpris ; la piqure de rappel est prévue.',
+        ),
+      ).toEqual([]);
+      expect(detail(await spelling('Cette mèthode est efficace.'))).toEqual([
+        ['mèthode', 'méthode', 'high'],
+      ]);
+    });
+
+    it('signale une faute répétée dans le document, sans jamais la présenter comme certaine', async () => {
+      const issues = await spelling(
+        'Le developpement du projet a commencé en mars.',
+        'Ce developpement a ensuite ralenti.',
+        'Le developpement est terminé.',
+        'Le stage a eu lieu à Yopougon. Les bureaux de Yopougon sont neufs. Yopougon est vaste.',
+      );
+      expect(detail(issues)).toEqual([
+        ['developpement', 'développement', 'medium'],
+        ['developpement', 'développement', 'medium'],
+        ['developpement', 'développement', 'medium'],
+      ]);
+    });
+
+    it('aucune correction incertaine en Erreur : mot rare ou première lettre changée', async () => {
+      const issues = await spelling(
+        'Nous avons organisé une formassion pour les agents.',
+        'Il a ealement participé à la réunion.',
+      );
+      expect(issues.every((issue) => issue.confidence !== 'high')).toBe(true);
+    });
+
+    it('le budget de recherches de suggestions grandit avec la longueur du document', async () => {
+      const typos = ['systeme', 'egalement', 'developpeur', 'professionel'];
+      const limited = new LanguageEngine([new SpellingAnalyzer()], {
+        ...LANGUAGE_ENGINE_CONFIG,
+        spelling: {
+          ...LANGUAGE_ENGINE_CONFIG.spelling,
+          maxSuggestionLookups: 1,
+          suggestionLookupsPerThousandWords: 1,
+        },
+      });
+      const short = await modelOf([{ p: `Ce ${typos.join(' et ce ')} sont là.` }]);
+      expect(limited.analyze(short)).toHaveLength(1);
+      const long = await modelOf([
+        { p: `Ce ${typos.join(' et ce ')} sont là.` },
+        ...Array.from({ length: 140 }, (_, i) => ({ p: filler(30, i) })),
+      ]);
+      expect(long.meta.wordCount).toBeGreaterThan(4000);
+      expect(limited.analyze(long).map((i) => i.original)).toEqual(typos);
+    });
+  });
 });

@@ -1,4 +1,5 @@
 import type { SpellChecker, SpellingDictionaries } from './dictionaries.js';
+import { NO_FREQUENCY, type WordFrequency } from './frequency.js';
 import { TECHNICAL_TERMS } from './technical-terms.js';
 
 /**
@@ -35,6 +36,8 @@ export interface SpellingLexicon {
   foreign: WordList;
   user: WordList;
   properNames: WordList;
+  /** Fréquence d'usage des mots français (classement des corrections). */
+  frequency: WordFrequency;
 }
 
 export function defaultLexicon(dictionaries: SpellingDictionaries): SpellingLexicon {
@@ -44,6 +47,7 @@ export function defaultLexicon(dictionaries: SpellingDictionaries): SpellingLexi
     foreign: dictionaries.english,
     user: EMPTY_WORD_LIST,
     properNames: EMPTY_WORD_LIST,
+    frequency: dictionaries.frequency ?? NO_FREQUENCY,
   };
 }
 
