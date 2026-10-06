@@ -20,6 +20,7 @@ export class SpellingPreloadService implements OnApplicationBootstrap {
         rssAfterMb: stats.rssAfterMb,
         loads: stats.loads,
         englishWords: stats.englishWords,
+        frequencyWords: stats.frequencyWords,
       },
       'Dictionnaires orthographiques chargés',
     );

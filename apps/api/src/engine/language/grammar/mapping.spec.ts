@@ -32,7 +32,7 @@ function contextOf(text: string): AnalyzerContext {
     config: LANGUAGE_ENGINE_CONFIG,
     protectedRanges: findProtectedRanges(text),
     hasDroppedInlineContent: false,
-    document: { wordCounts: new Map(), counters: new Map(), grammar: null },
+    document: { wordCount: 100, wordCounts: new Map(), counters: new Map(), grammar: null },
   };
 }
 
@@ -167,5 +167,23 @@ describe('Filtrage des erreurs Grammalecte', () => {
     const text = 'Texte court.';
     const bad = { ...error(text, 'court', 'gn', ['courts']), end: 999 };
     expect(map(text, [bad, { ...bad, start: 5, end: 5 }])).toEqual([]);
+  });
+
+  it('accord juste après un nom propre, un sigle ou un nombre : jamais une certitude', () => {
+    const text = 'Une exposition réalisée par le CNRS intitulée Images du ciel.';
+    expect(map(text, [error(text, 'intitulée', 'gn', ['intitulé'])])).toEqual([
+      ['intitulée', 'intitulé', 'gender_number', 'medium'],
+    ]);
+    const digits = 'La version Crown 602 fabriquée par Taito est ancienne.';
+    expect(map(digits, [error(digits, 'fabriquée', 'gn', ['fabriquées'])])).toEqual([
+      ['fabriquée', 'fabriquées', 'gender_number', 'medium'],
+    ]);
+  });
+
+  it('un nom propre après un titre (« M. Moussavi ») n’est jamais signalé seul', () => {
+    const text = 'Selon M. Moussavi, la situation évolue.';
+    const block = blockOf(text);
+    expect(block.sentences.length).toBeGreaterThan(1);
+    expect(map(text, [error(text, 'Moussavi', 'gn', ['Moussavis'])])).toEqual([]);
   });
 });

@@ -67,3 +67,41 @@ export function isContinuousText(block: Block, start: number, end: number): bool
   }
   return true;
 }
+
+/**
+ * Titres et abréviations qui précèdent un nom propre : « M. », « Mme », « Mlle »,
+ * « Me », « Mgr », « Dr », « Pr. », « St », ainsi que les initiales (« J. »,
+ * « J.-P. »). Le point d'une abréviation n'est pas une fin de phrase.
+ */
+const TITLE = /(?:^|[\s(«"'’])(?:M|MM|Mme|Mmes|Mlle|Mlles|Me|Mgr|Dr|Drs|Pr|Prs|St|Ste|Sr)\.?\s+$/u;
+const INITIALS = /(?:^|[\s(«"'’])\p{Lu}\.(?:-?\p{Lu}\.)*\s+$/u;
+/** Mot en majuscule, ou particule d'un nom (« Velasio de Paolis », « van Gogh »). */
+const NAME_PART =
+  /(?:\p{Lu}[\p{L}'’-]*|de|du|des|d['’]|van|von|der|da|di|del|della|dos|le|la|ben|ibn|el|al)\s*$/u;
+
+/**
+ * Le mot qui commence en `position` suit-il un titre ou des initiales, directement
+ * ou après d'autres mots en majuscule (« M. Kouassi Yao », « Mme Aya Koné ») ?
+ */
+export function followsTitleOrInitial(text: string, position: number): boolean {
+  let before = text.slice(Math.max(0, position - 80), position);
+  for (let i = 0; i < 5; i++) {
+    if (TITLE.test(before) || INITIALS.test(before)) return true;
+    const word = NAME_PART.exec(before.trimEnd());
+    if (!word) return false;
+    before = before.slice(0, word.index);
+  }
+  return false;
+}
+
+/**
+ * Le mot commence-t-il une phrase (aucune lettre avant lui dans la phrase) ?
+ * Une « phrase » qui commence juste après un titre ou des initiales (« M. »,
+ * « J.-P. ») n'en est pas une : le découpage a pris l'abréviation pour une fin.
+ */
+export function isSentenceStart(block: Block, position: number): boolean {
+  const sentence = block.sentences.find((s) => s.start <= position && position < s.end);
+  const from = sentence?.start ?? 0;
+  if (/[\p{L}\p{N}]/u.test(block.text.slice(from, position))) return false;
+  return !followsTitleOrInitial(block.text, from);
+}

@@ -1,12 +1,14 @@
 import type NSpell from 'nspell';
 import { EnglishWordList, parseDicStems } from './english-words.js';
+import { loadFrequencies, type WordFrequency } from './frequency.js';
 
 /**
  * Dictionnaires de l'analyseur orthographique :
  * - français : nspell (moteur Hunspell en JavaScript) avec le dictionnaire
  *   Grammalecte fourni par `dictionary-fr` ;
  * - anglais : simple liste de formes de base (`dictionary-en`), pour reconnaître
- *   les anglicismes (voir english-words.ts).
+ *   les anglicismes (voir english-words.ts) ;
+ * - fréquences : liste wordfreq des mots français (voir frequency.ts).
  *
  * Le chargement coûte quelques secondes et plusieurs centaines de Mo de mémoire
  * (voir docs/language-engine.md) : il a lieu UNE SEULE FOIS par processus, et
@@ -81,6 +83,8 @@ export interface DictionaryLoadStats {
   loadMs: number | null;
   /** Nombre de formes de base anglaises connues. */
   englishWords: number;
+  /** Nombre de mots français dont la fréquence est connue. */
+  frequencyWords: number;
   /** Mémoire du processus (RSS, en Mo) juste avant et juste après le chargement. */
   rssBeforeMb: number | null;
   rssAfterMb: number | null;
@@ -136,12 +140,15 @@ class NspellChecker implements SpellChecker {
 export interface SpellingDictionaries {
   french: SpellChecker;
   english: EnglishWordList;
+  /** Fréquence d'usage des mots français (classement des corrections). */
+  frequency: WordFrequency;
 }
 
 const stats: DictionaryLoadStats = {
   loads: 0,
   loadMs: null,
   englishWords: 0,
+  frequencyWords: 0,
   rssBeforeMb: null,
   rssAfterMb: null,
 };
@@ -165,11 +172,13 @@ export function loadSpellingDictionaries(): Promise<SpellingDictionaries> {
     stats.rssBeforeMb = megabytes(process.memoryUsage().rss);
     const spell = nspell({ aff: toBuffer(french.aff), dic: toBuffer(french.dic) });
     const englishWords = new EnglishWordList(parseDicStems(english.dic));
+    const frequency = loadFrequencies();
     stats.loads++;
+    stats.frequencyWords = frequency.size;
     stats.loadMs = Math.round(performance.now() - started);
     stats.englishWords = englishWords.size;
     stats.rssAfterMb = megabytes(process.memoryUsage().rss);
-    loaded = { french: new NspellChecker(spell), english: englishWords };
+    loaded = { french: new NspellChecker(spell), english: englishWords, frequency };
     return loaded;
   })();
   return loading;

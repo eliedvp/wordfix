@@ -7,6 +7,7 @@ import { SpellingAnalyzer } from './analyzers/spelling.analyzer.js';
 import { TypographyAnalyzer } from './analyzers/typography.analyzer.js';
 import {
   LANGUAGE_ENGINE_CONFIG,
+  LANGUAGE_RULE_IDS,
   type LanguageEngineConfig,
   type LanguageRuleId,
 } from './config.js';
@@ -41,7 +42,9 @@ export class LanguageEngine {
     const counts = new Map<LanguageRuleId, number>();
     const out: LanguageIssue[] = [];
     const hasDroppedInlineContent = input.meta.skipped.equations > 0;
+    const caps = documentCaps(this.config, input.meta.wordCount);
     const document: DocumentContext = {
+      wordCount: input.meta.wordCount,
       wordCounts: countWords(input, this.config),
       counters: new Map(),
       grammar: input.grammar ?? null,
@@ -68,7 +71,7 @@ export class LanguageEngine {
 
       for (const issue of dedupe(found)) {
         const count = counts.get(issue.rule) ?? 0;
-        if (count >= this.config.caps[issue.rule]) continue;
+        if (count >= caps[issue.rule]) continue;
         counts.set(issue.rule, count + 1);
         out.push(issue);
       }
@@ -89,6 +92,19 @@ export function createLanguageEngine(config: LanguageEngineConfig = LANGUAGE_ENG
     ],
     config,
   );
+}
+
+/** Plafond de chaque règle pour ce document : le minimum, ou proportionnel à la longueur. */
+export function documentCaps(
+  config: LanguageEngineConfig,
+  wordCount: number,
+): Record<LanguageRuleId, number> {
+  const caps = {} as Record<LanguageRuleId, number>;
+  for (const rule of LANGUAGE_RULE_IDS) {
+    const proportional = Math.ceil((config.capsPerThousandWords[rule] * wordCount) / 1000);
+    caps[rule] = Math.max(config.caps[rule], proportional);
+  }
+  return caps;
 }
 
 /** Occurrences de chaque mot (en minuscules) dans les paragraphes relus : un seul passage. */

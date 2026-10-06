@@ -1,7 +1,7 @@
 import type { Block, Confidence } from '@wordfix/shared';
 import type { GrammarConfig } from '../config.js';
 import { TECHNICAL_TERMS } from '../spelling/technical-terms.js';
-import { overlapsAny } from '../text.js';
+import { isSentenceStart, overlapsAny } from '../text.js';
 import type { AnalyzerContext, LanguageIssue } from '../types.js';
 import type { GrammalecteError } from './grammalecte-client.js';
 
@@ -101,7 +101,8 @@ function assessConfidence(
     entry.suggestions.length === 1 &&
     !hasAlternatives &&
     config.highConfidenceTypes.includes(entry.error.type) &&
-    !touchesAmbiguousWord(block, entry.error.start, entry.original, ambiguous)
+    !touchesAmbiguousWord(block, entry.error.start, entry.original, ambiguous) &&
+    !followsNameLike(block, entry.error.start)
   ) {
     return 'high';
   }
@@ -124,6 +125,20 @@ function touchesAmbiguousWord(
   const before = block.text.slice(sentence?.start ?? 0, start).match(WORD) ?? [];
   const previous = before.at(-1);
   return previous !== undefined && ambiguous.has(normalizeWord(previous));
+}
+
+/**
+ * L'erreur suit-elle directement un nom propre, un sigle ou un nombre ? L'accord
+ * se fait peut-être avec un nom plus éloigné (« une exposition réalisée par le
+ * CNRS intitulée », « la version Crown 602 fabriquée ») : Grammalecte accorde
+ * avec le mot le plus proche, ce n'est donc jamais une certitude.
+ */
+function followsNameLike(block: Block, start: number): boolean {
+  const sentence = block.sentences.find((s) => s.start <= start && start < s.end);
+  const before = [...block.text.slice(sentence?.start ?? 0, start).matchAll(WORD)];
+  const previous = before.at(-1);
+  if (!previous) return false;
+  return isNameLike(block, (sentence?.start ?? 0) + previous.index, previous[0]);
 }
 
 /** Corrections qui changent réellement le texte (pas seulement apostrophes, espaces ou tirets). */
@@ -176,13 +191,6 @@ function isNameLike(block: Block, position: number, word: string): boolean {
   if (TECHNICAL.has(word.toLowerCase())) return true;
   // Majuscule en milieu de phrase : nom propre (Kouassi, Ouattara, React).
   return /^\p{Lu}/u.test(word) && !isSentenceStart(block, position);
-}
-
-/** Le mot commence-t-il une phrase (aucune lettre avant lui dans la phrase) ? */
-function isSentenceStart(block: Block, position: number): boolean {
-  const sentence = block.sentences.find((s) => s.start <= position && position < s.end);
-  const from = sentence?.start ?? 0;
-  return !/[\p{L}\p{N}]/u.test(block.text.slice(from, position));
 }
 
 function sentenceIndex(block: Block, position: number): number {

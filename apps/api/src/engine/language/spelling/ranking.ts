@@ -76,28 +76,38 @@ export function weightedDistance(source: string, target: string): number {
 
 export interface RankedCandidate {
   word: string;
+  /** Distance pondérée entre le mot écrit et le candidat. */
   cost: number;
+  /** Fréquence d'usage (Zipf), null si inconnue. */
+  zipf: number | null;
+  /** Score de classement : distance, rang nspell, fréquence (plus bas = meilleur). */
+  score: number;
 }
 
 /**
  * Classe les candidats : distance pondérée, puis rang chez nspell (léger
- * départage), puis fréquence si une source est disponible.
+ * départage), puis fréquence d'usage. Un mot courant passe devant un mot rare
+ * aussi proche (« buget » → budget plutôt que auget).
  */
 export function rankCandidates(
   word: string,
   candidates: readonly string[],
   frequency: WordFrequency,
+  frequencyWeight = 0,
 ): RankedCandidate[] {
   const lower = word.toLowerCase();
   return candidates
-    .map((candidate, rank) => ({
-      word: candidate,
-      cost:
-        weightedDistance(lower, candidate.toLowerCase()) +
-        rank * 0.02 -
-        (frequency.of(candidate) ?? 0) * 0.1,
-    }))
-    .sort((x, y) => x.cost - y.cost);
+    .map((candidate, rank) => {
+      const cost = weightedDistance(lower, candidate.toLowerCase());
+      const zipf = frequency.of(candidate);
+      return {
+        word: candidate,
+        cost,
+        zipf,
+        score: cost + rank * 0.02 - (zipf ?? 0) * frequencyWeight,
+      };
+    })
+    .sort((x, y) => x.score - y.score);
 }
 
 export type SpellingConfidence = Confidence;
@@ -107,6 +117,9 @@ export interface SpellingVerdict {
   best: string | null;
   /** Autres formes aussi proches (ex. masculin / féminin), citées dans l'explication. */
   alternatives: string[];
+  /** Distance du candidat retenu (pour les règles de confiance de l'analyseur). */
+  cost: number | null;
+  zipf: number | null;
 }
 
 function commonPrefix(a: string, b: string): number {
@@ -115,26 +128,50 @@ function commonPrefix(a: string, b: string): number {
   return i;
 }
 
+const NONE: SpellingVerdict = {
+  confidence: 'low',
+  best: null,
+  alternatives: [],
+  cost: null,
+  zipf: null,
+};
+
 /**
  * Confiance d'une correction :
- * - élevée : meilleur candidat nettement devant, très peu de candidats plausibles,
- *   d'accord avec nspell ;
- * - moyenne : en tête mais avec un ou deux concurrents (ou des formes d'un même mot) ;
+ * - élevée (Erreur) : meilleur candidat nettement devant, très peu de candidats
+ *   plausibles, une seule modification élémentaire au plus, vers un mot courant ;
+ * - moyenne (Suggestion) : en tête mais avec un ou deux concurrents (ou des
+ *   formes d'un même mot), ou correction plus lointaine, ou mot rare ;
  * - faible : trop d'ambiguïté, aucune correction proposée.
+ *
+ * Sans fréquence, le premier choix de nspell doit être le nôtre. Avec la
+ * fréquence, un désaccord avec nspell limite la confiance à « moyenne ».
  */
 export function assessConfidence(
   word: string,
   ranked: readonly RankedCandidate[],
   nspellFirst: string | undefined,
   config: SpellingConfig,
+  options: {
+    /** Les candidats ont été classés avec la fréquence (mot absent de la liste = rare). */
+    useFrequency?: boolean;
+    /** Exiger l'accord avec nspell même avec la fréquence (mot peut-être nom propre). */
+    requireAgreement?: boolean;
+  } = {},
 ): SpellingVerdict {
+  const withFrequency = options.useFrequency ?? false;
   const best = ranked[0];
-  if (!best) return { confidence: 'low', best: null, alternatives: [] };
+  if (!best) return NONE;
 
   const second = ranked[1];
-  const margin = second ? second.cost - best.cost : Number.POSITIVE_INFINITY;
-  const close = ranked.filter((candidate) => candidate.cost <= best.cost + config.closeWindow);
-  const density = ranked.filter((candidate) => candidate.cost <= config.densityCost).length;
+  const margin = second ? second.score - best.score : Number.POSITIVE_INFINITY;
+  const close = ranked.filter((candidate) => candidate.score <= best.score + config.closeWindow);
+  // Candidats plausibles : assez proches du mot, et pas beaucoup moins probables
+  // que le meilleur (un mot très rare ne fait pas concurrence à un mot courant).
+  const density = ranked.filter(
+    (candidate) =>
+      candidate.cost <= config.densityCost && candidate.score - best.score <= config.densityWindow,
+  ).length;
   const maxCost =
     [...word].length <= config.shortWordLength ? config.maxCostShortWord : config.maxCost;
   const agrees = nspellFirst === best.word;
@@ -146,14 +183,41 @@ export function assessConfidence(
         commonPrefix(candidate.word.toLowerCase(), bestLower) >=
         Math.max(4, Math.ceil(bestLower.length * config.sameFamilyPrefixRatio)),
     );
-  const alternatives = close.slice(1).map((candidate) => candidate.word);
+  // Autres corrections aussi proches du mot écrit, les formes du même mot d'abord
+  // (« heureus » → heureux, puis heureuse avant heures).
+  const alternatives = ranked
+    .filter((candidate) => candidate !== best && candidate.cost <= best.cost + config.closeWindow)
+    .sort(
+      (x, y) =>
+        commonPrefix(y.word.toLowerCase(), bestLower) -
+          commonPrefix(x.word.toLowerCase(), bestLower) || x.score - y.score,
+    )
+    .map((candidate) => candidate.word);
+  const verdict = (confidence: SpellingConfidence): SpellingVerdict => ({
+    confidence,
+    best: best.word,
+    alternatives,
+    cost: best.cost,
+    zipf: best.zipf,
+  });
 
-  if (!agrees || best.cost > maxCost) return { confidence: 'low', best: null, alternatives: [] };
+  if (best.cost > maxCost || (!agrees && (!withFrequency || options.requireAgreement))) {
+    return NONE;
+  }
+  // Une faute de frappe touche rarement la première lettre : si la correction la
+  // change (« ealement » → « salement »), elle n'est jamais présentée comme certaine.
+  const sameFirstLetter =
+    stripAccents(word.charAt(0).toLowerCase()) === stripAccents(bestLower.charAt(0));
+  const certain =
+    agrees &&
+    sameFirstLetter &&
+    best.cost <= config.highMaxCost &&
+    (!withFrequency || (best.zipf ?? 0) >= config.highMinZipf);
   if (margin >= config.highMargin && density <= config.highMaxDensity) {
-    return { confidence: 'high', best: best.word, alternatives };
+    return verdict(certain ? 'high' : 'medium');
   }
   if ((margin >= config.mediumMargin || sameFamily) && density <= config.mediumMaxDensity) {
-    return { confidence: 'medium', best: best.word, alternatives };
+    return verdict('medium');
   }
-  return { confidence: 'low', best: null, alternatives: [] };
+  return NONE;
 }
