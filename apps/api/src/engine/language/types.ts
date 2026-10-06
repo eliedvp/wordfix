@@ -1,6 +1,14 @@
 import type { Block, BlockKind, DocumentModel, TextRange } from '@wordfix/shared';
 import type { CandidateIssue } from '../types.js';
 import type { LanguageEngineConfig, LanguageRuleId } from './config.js';
+import type { GrammalecteError } from './grammar/grammalecte-client.js';
+
+/**
+ * Erreurs grammaticales brutes par paragraphe (identifiant du bloc → erreurs),
+ * calculées avant l'analyse par Grammalecte (processus séparé, asynchrone) :
+ * le moteur reste synchrone et déterministe pour une même entrée.
+ */
+export type GrammarFindings = ReadonlyMap<string, readonly GrammalecteError[]>;
 
 /**
  * Problème détecté par un analyseur de langue. C'est le type commun du moteur
@@ -30,6 +38,8 @@ export interface DocumentContext {
   wordCounts: ReadonlyMap<string, number>;
   /** Compteurs propres à cette analyse (budgets des analyseurs), remis à zéro à chaque document. */
   counters: Map<string, number>;
+  /** Erreurs Grammalecte du document, si la vérification grammaticale a eu lieu. */
+  grammar: GrammarFindings | null;
 }
 
 /**
@@ -43,5 +53,10 @@ export interface LanguageAnalyzer {
   analyze(block: Block, context: AnalyzerContext): LanguageIssue[];
 }
 
-/** Entrée du moteur : le document structuré produit par l'extraction actuelle. */
-export type LanguageInput = Pick<DocumentModel, 'blocks' | 'meta'>;
+/**
+ * Entrée du moteur : le document structuré produit par l'extraction actuelle,
+ * avec, si disponibles, les erreurs grammaticales déjà calculées.
+ */
+export type LanguageInput = Pick<DocumentModel, 'blocks' | 'meta'> & {
+  grammar?: GrammarFindings | null;
+};

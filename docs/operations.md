@@ -13,7 +13,8 @@ L'hébergement de production n'est pas encore choisi (P2). Ce document liste ce 
 
 - `API_INTERNAL_URL` doit être défini **avant** `pnpm build` si l'API n'est pas sur `http://127.0.0.1:4000`.
 - Plusieurs workers peuvent tourner en parallèle (BullMQ répartit les jobs ; la purge horaire n'est planifiée qu'une fois).
-- **Mémoire du worker** : le dictionnaire orthographique français est chargé au démarrage (≈ 5 s, ≈ 300 Mo de tas, RSS ≈ 700 à 800 Mo en charge). Prévoir au moins **1 Go par worker** ; `start:worker` fixe `--max-old-space-size=1024`. L'API n'est pas concernée. Détail : [`language-engine.md`](language-engine.md#mémoire-et-chargement).
+- **Mémoire du worker** : le dictionnaire orthographique français est chargé au démarrage (≈ 5 s, ≈ 300 Mo de tas, RSS ≈ 700 à 800 Mo en charge). `start:worker` fixe `--max-old-space-size=1024`. L'API n'est pas concernée. Détail : [`language-engine.md`](language-engine.md#mémoire-et-chargement).
+- **Python 3 (≥ 3.9) sur la machine du worker** : la vérification grammaticale (Grammalecte) tourne dans un processus Python lancé par chaque worker (≈ 80 Mo au démarrage, ≈ 310 Mo après un gros document). Aucune bibliothèque à installer ; interpréteur réglable par `GRAMMALECTE_PYTHON`, désactivation possible par `GRAMMAR_ENGINE=off`. Avec l'orthographe, prévoir **≈ 1,2 Go par worker**. Sans Python, le worker démarre et journalise « Grammalecte indisponible » : les analyses se font alors sans grammaire. Détail : [`language-engine.md`](language-engine.md#grammaire--grammaranalyzer-grammalecte).
 
 ## Mise à jour
 
@@ -27,6 +28,7 @@ L'hébergement de production n'est pas encore choisi (P2). Ce document liste ce 
 - Logs JSON (pino) : chaque requête porte `requestId` ; le worker journalise `analysisId`, étape, durée et jetons de chaque appel IA. Aucun texte de document.
 - Consommation IA : colonnes `tokensIn` / `tokensOut` de chaque analyse ; plafond quotidien `AI_DAILY_TOKEN_BUDGET`.
 - Log « Nettoyage terminé » toutes les heures (purge).
+- Au démarrage du worker : log « Grammalecte prêt » (version, durée de chargement). Une alerte sur « Grammalecte indisponible » ou « Vérification grammaticale impossible » signale des analyses sans grammaire.
 
 ## Sauvegardes
 
