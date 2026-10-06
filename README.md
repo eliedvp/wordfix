@@ -16,7 +16,7 @@ Navigateur ──► Site Next.js ──/api/*──► API NestJS ──► Pos
 ```
 
 1. **Import en deux temps** : le fichier est vérifié (structure, taille, sécurité), WordFix affiche son nombre de pages, puis l'utilisateur lance l'analyse.
-2. **Analyse asynchrone** (worker) : lecture structurée du `.docx`, règles déterministes, relecture IA paragraphe par paragraphe, puis par section, puis cohérence du document entier, vérification des contradictions.
+2. **Analyse asynchrone** (worker) : lecture structurée du `.docx`, règles déterministes et orthographe française ([Language Engine](docs/language-engine.md), dictionnaire Grammalecte, sans appel réseau), relecture IA paragraphe par paragraphe, puis par section, puis cohérence du document entier, vérification des contradictions.
 3. **Relecture** : chaque point est localisé (section, paragraphe, page estimée), expliqué, et peut être appliqué (copié), modifié, ignoré ou marqué comme vérifié.
 
 | Dossier              | Rôle                                         | Technologies                         |

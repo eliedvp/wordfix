@@ -1,13 +1,17 @@
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 import { buildDocx, filler } from '../../../test/fixtures/builders.js';
 import { parseDocx } from '../../docx/parser/docx-parser.js';
 import { runRules } from './rules.js';
+import { loadSpellingDictionaries } from '../language/spelling/dictionaries.js';
 
 async function rulesFor(nodes: Parameters<typeof buildDocx>[0]) {
   return runRules(await parseDocx(await buildDocx(nodes)));
 }
 
 describe('règles déterministes', () => {
+  // Le dictionnaire français est chargé une fois pour tout le fichier (≈ 5 s).
+  beforeAll(() => loadSpellingDictionaries(), 60_000);
+
   it('repère les mots doublés, mais pas « nous nous »', async () => {
     const issues = await rulesFor([{ p: 'Le le projet a commencé. Nous nous sommes réunis.' }]);
     const repeated = issues.filter((i) => i.subtype === 'typo');

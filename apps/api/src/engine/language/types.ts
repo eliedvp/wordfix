@@ -20,6 +20,16 @@ export interface AnalyzerContext {
   protectedRanges: readonly TextRange[];
   /** Vrai si le document contient des équations, absentes du texte extrait. */
   hasDroppedInlineContent: boolean;
+  /** Informations calculées une fois pour tout le document. */
+  document: DocumentContext;
+}
+
+/** Contexte partagé par tous les paragraphes d'un même document, pendant une analyse. */
+export interface DocumentContext {
+  /** Nombre d'occurrences de chaque mot (en minuscules) dans le document. */
+  wordCounts: ReadonlyMap<string, number>;
+  /** Compteurs propres à cette analyse (budgets des analyseurs), remis à zéro à chaque document. */
+  counters: Map<string, number>;
 }
 
 /**

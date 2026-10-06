@@ -139,8 +139,9 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - run: corepack enable
+      # Pas de cache pnpm ici : l'audit lit le lockfile sans installer, le dossier
+      # du cache n'existerait pas et son enregistrement ferait échouer le job.
       - uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: pnpm
       - run: pnpm audit --audit-level high
