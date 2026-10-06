@@ -18,9 +18,16 @@ import { gunzipSync } from 'node:zlib';
  */
 export interface WordFrequency {
   of(word: string): number | null;
+  /**
+   * Mots de la liste qui ne diffèrent de `word` que par les accents (« taches » →
+   * tâches, tachés), avec leur fréquence. Vide si aucune liste n'est installée.
+   */
+  accentVariants(word: string): readonly { word: string; zipf: number }[];
 }
 
-export const NO_FREQUENCY: WordFrequency = { of: () => null };
+export const NO_FREQUENCY: WordFrequency = { of: () => null, accentVariants: () => [] };
+
+const stripAccents = (text: string) => text.normalize('NFD').replace(/\p{M}/gu, '');
 
 export class ZipfFrequency implements WordFrequency {
   constructor(private readonly values: ReadonlyMap<string, number>) {}
@@ -29,8 +36,29 @@ export class ZipfFrequency implements WordFrequency {
     return this.values.size;
   }
 
+  entries(): IterableIterator<[string, number]> {
+    return this.values.entries();
+  }
+
+  private byBase: Map<string, { word: string; zipf: number }[]> | null = null;
+
   of(word: string): number | null {
     return this.values.get(word.toLocaleLowerCase('fr').replace(/’/g, "'")) ?? null;
+  }
+
+  accentVariants(word: string): readonly { word: string; zipf: number }[] {
+    // Index construit au premier usage (≈ 120 000 mots, une fois par processus).
+    if (!this.byBase) {
+      this.byBase = new Map();
+      for (const [entry, zipf] of this.values) {
+        const base = stripAccents(entry);
+        const list = this.byBase.get(base) ?? [];
+        list.push({ word: entry, zipf });
+        this.byBase.set(base, list);
+      }
+    }
+    const lower = word.toLocaleLowerCase('fr');
+    return (this.byBase.get(stripAccents(lower)) ?? []).filter((variant) => variant.word !== lower);
   }
 }
 

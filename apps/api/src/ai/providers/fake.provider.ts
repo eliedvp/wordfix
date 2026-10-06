@@ -1,4 +1,9 @@
-import type { AiProvider, StructuredRequest, StructuredResult } from '../ai-provider.js';
+import {
+  AiError,
+  type AiProvider,
+  type StructuredRequest,
+  type StructuredResult,
+} from '../ai-provider.js';
 
 /**
  * Fournisseur déterministe, RÉSERVÉ AUX TESTS AUTOMATISÉS (refusé par la
@@ -15,6 +20,63 @@ export const FAKE_TYPOS: Record<string, string> = {
   'nous avons réalisés': 'nous avons réalisé',
 };
 
+/**
+ * Cas ambigus du moteur de langue : expressions que le faux fournisseur « connaît ».
+ * Il choisit l'option qui, remise dans la phrase, forme une de ces expressions ;
+ * sinon il répond « verify ». Il garde le mot tel quel s'il figure dans FAKE_KEEP.
+ */
+export const FAKE_COLLOCATIONS = [
+  'permis de conduire',
+  'dans le cadre de',
+  'les tâches qui',
+  'la communication interne',
+  'les utilisateurs ont',
+];
+export const FAKE_KEEP = ['floculés'];
+
+const CASE_BLOCK =
+  /\[(c\d+)\]\nMot : « ([^\n]*) »\nPhrase : « ([^\n]*) »\nInformation : [^\n]*\nOptions :\n((?: {2}[a-z]\) [^\n]*\n?)+)/g;
+const OPTION_LINE = /^ {2}[a-z]\) (?:remplacer « (.*) » par « (.*) »|« (.*) »)$/;
+
+function ambiguityDecisions(input: string): unknown {
+  const decisions = [...input.matchAll(CASE_BLOCK)].map((match) => {
+    const [, caseId = '', word = '', phrase = '', optionLines = ''] = match;
+    if (FAKE_KEEP.includes(word)) {
+      return {
+        caseId,
+        decision: 'keep',
+        correction: null,
+        justification: 'Mot existant.',
+        confidence: 'medium',
+      };
+    }
+    for (const line of optionLines.split('\n')) {
+      const option = OPTION_LINE.exec(line);
+      if (!option) continue;
+      const original = option[1] ?? word;
+      const replacement = option[2] ?? option[3] ?? '';
+      const candidate = phrase.replace(original, replacement).toLocaleLowerCase('fr');
+      if (FAKE_COLLOCATIONS.some((expression) => candidate.includes(expression))) {
+        return {
+          caseId,
+          decision: 'correct',
+          correction: replacement,
+          justification: 'Expression usuelle.',
+          confidence: 'high',
+        };
+      }
+    }
+    return {
+      caseId,
+      decision: 'verify',
+      correction: null,
+      justification: 'Contexte insuffisant.',
+      confidence: 'low',
+    };
+  });
+  return { decisions };
+}
+
 const BLOCK_LINE = /^\[(b_\d{6})\] \(([^)]*)\)\n([^\n]*)/gm;
 
 function blocksOf(input: string): { id: string; label: string; text: string }[] {
@@ -29,6 +91,10 @@ export class FakeAiProvider implements AiProvider {
   readonly name = 'fake';
   /** Permet aux tests de simuler une panne du fournisseur. */
   failNext: Error | null = null;
+  /** Panne d'une étape précise (tous ses appels), pour tester un repli ciblé. */
+  failSchemas = new Map<string, Error>();
+  /** Réponse brute imposée pour une étape (réponse invalide, option inventée…). */
+  responses = new Map<string, unknown>();
   calls: string[] = [];
 
   generateStructured<T>(request: StructuredRequest<T>): Promise<StructuredResult<T>> {
@@ -38,7 +104,19 @@ export class FakeAiProvider implements AiProvider {
       this.failNext = null;
       return Promise.reject(error);
     }
-    const data = request.schema.parse(this.respond(request.schemaName, request.input));
+    const failure = this.failSchemas.get(request.schemaName);
+    if (failure) return Promise.reject(failure);
+    const raw = this.responses.has(request.schemaName)
+      ? this.responses.get(request.schemaName)
+      : this.respond(request.schemaName, request.input);
+    // Comme le vrai fournisseur : une réponse hors schéma est une erreur « invalid_output ».
+    const parsed = request.schema.safeParse(raw);
+    if (!parsed.success) {
+      return Promise.reject(
+        new AiError('invalid_output', 'réponse hors schéma (fournisseur de test)'),
+      );
+    }
+    const data = parsed.data;
     return Promise.resolve({
       data,
       usage: {
@@ -116,6 +194,8 @@ export class FakeAiProvider implements AiProvider {
           ],
         };
       }
+      case 'language_ambiguity':
+        return ambiguityDecisions(input);
       case 'contradiction_check': {
         const durations = [...input.matchAll(/(\d+ mois)/g)].map((m) => m[1] ?? '');
         return {

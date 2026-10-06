@@ -55,8 +55,12 @@ describe('SpellingAnalyzer (orthographe française)', () => {
   it('3. « peris » : aucune correction hasardeuse quand les candidats sont trop nombreux', async () => {
     const issues = await spelling('Il a enfin obtenu son peris de conduire cette année.');
     // permis, paris, péris, perdis… sont aussi proches : sans contexte, on ne tranche pas.
-    expect(issues.every((issue) => issue.suggestion === 'permis')).toBe(true);
-    expect(issues).toEqual([]);
+    // Le mot reste « À vérifier » (confiance faible, sans correction), et devient un cas
+    // ambigu que l'IA pourra départager parmi ces candidats.
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toMatchObject({ original: 'peris', suggestion: null, confidence: 'low' });
+    expect(issues[0]?.ambiguity?.fallback).toBe('verify');
+    expect(issues[0]?.ambiguity?.options.map((o) => o.replacement)).toContain('permis');
   });
 
   it('4. ne signale pas les noms propres absents du dictionnaire', async () => {
@@ -173,8 +177,12 @@ describe('SpellingAnalyzer (orthographe française)', () => {
       expect(issues[0]?.explanation).toContain('heureuse');
     });
 
-    it('cadr : trop de candidats proches, aucune correction', async () => {
-      expect(await spelling('Dans le cadr de mon stage, je travaille beaucoup.')).toEqual([]);
+    it('cadr : trop de candidats proches, aucune correction (cas ambigu « À vérifier »)', async () => {
+      const issues = await spelling('Dans le cadr de mon stage, je travaille beaucoup.');
+      expect(issues.map((i) => [i.original, i.suggestion, i.confidence])).toEqual([
+        ['cadr', null, 'low'],
+      ]);
+      expect(issues[0]?.ambiguity?.options.map((o) => o.replacement)).toContain('cadre');
     });
 
     it('l’occasions : le mot est bien orthographié (accord à traiter par la grammaire)', async () => {

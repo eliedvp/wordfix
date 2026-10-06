@@ -55,7 +55,10 @@ describe('Vérification grammaticale (DOCX → extraction → Grammalecte → re
   }
 
   const grammarIssues = (list: IssueListDto): IssueDto[] =>
-    list.items.filter((issue) => issue.category === 'grammar' && issue.source === 'rules');
+    list.items.filter(
+      (issue) =>
+        issue.category === 'grammar' && (issue.source === 'rules' || issue.source === 'verify'),
+    );
 
   it('signale les fautes de grammaire à leur place, avec la nature décidée par WordFix', async () => {
     const list = await analyze([
@@ -68,7 +71,9 @@ describe('Vérification grammaticale (DOCX → extraction → Grammalecte → re
     const issues = grammarIssues(list);
     expect(issues.map((i) => [i.original, i.suggestion, i.nature, i.subtype])).toEqual([
       ['serveur', 'serveurs', 'error', 'gender_number'],
-      ['terminé', 'termine', 'suggestion', 'conjugation'],
+      // Plusieurs corrections possibles (termine, terminait, termina) : cas ambigu
+      // soumis à l'IA ; le faux fournisseur ne tranche pas → « À vérifier », sans correction.
+      ['terminé', null, 'verify', 'conjugation'],
       ['projet', null, 'verify', 'gender_number'],
     ]);
     for (const issue of issues) {

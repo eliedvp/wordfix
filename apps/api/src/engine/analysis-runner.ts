@@ -34,6 +34,14 @@ import {
 } from './prompts/prompts.v1.js';
 import { checkDocumentGrammar } from './language/grammar/check-document.js';
 import { getGrammalecte } from './language/grammar/grammalecte-client.js';
+import {
+  type AmbiguityCase,
+  collectAmbiguities,
+  fallbackIssues,
+  planBatches,
+} from './language/ambiguity/cases.js';
+import { resolveAmbiguities } from './language/ambiguity/resolve.js';
+import { LANGUAGE_ENGINE_CONFIG } from './language/config.js';
 import { loadSpellingDictionaries } from './language/spelling/dictionaries.js';
 import type { GrammarFindings } from './language/types.js';
 import { runRules } from './rules/rules.js';
@@ -83,6 +91,14 @@ interface ContextChunkPlan {
   blocks: string[];
   sections: string[];
 }
+/** Lot de cas ambigus du moteur de langue (étape « verify », index ≥ 100). */
+interface AmbiguityChunkPlan {
+  kind: 'ambiguity';
+  cases: AmbiguityCase[];
+}
+/** Les lots de cas ambigus ne partagent pas les index des vérifications de contradictions. */
+const AMBIGUITY_CHUNK_INDEX = 100;
+
 interface VerifyChunkPlan {
   blockA: string;
   blockB: string;
@@ -277,7 +293,9 @@ export class AnalysisRunner {
     // démarrage du worker : cet appel ne fait alors qu'attendre la même instance).
     await loadSpellingDictionaries();
     const grammar = await this.checkGrammar(state);
-    const ruleIssues = runRules(state.model, { grammar })
+    const ambiguity = await this.planAmbiguities(state, runRules(state.model, { grammar }));
+    chunks.push(...ambiguity.chunks);
+    const ruleIssues = ambiguity.direct
       .map((candidate) => materialize(candidate, state.resolver, state.analysisId))
       .flatMap((result) => (result.ok ? [result.data] : []));
 
@@ -292,6 +310,69 @@ export class AnalysisRunner {
         },
       }),
     ]);
+  }
+
+  /**
+   * Cas ambigus du moteur de langue (étape C) : seuls les cas que le moteur
+   * déterministe ne peut pas trancher sont confiés à l'IA, par lots, dans un
+   * budget strict par analyse. Les cas hors budget (ou si le plafond quotidien de
+   * jetons est atteint) gardent leur forme sans IA (« À vérifier » pour un mot
+   * inconnu, rien pour un mot qui existe). Les lots deviennent des morceaux de
+   * l'étape « verify » : reprenables, jamais payés deux fois.
+   */
+  private async planAmbiguities(
+    state: RunState,
+    candidates: CandidateIssue[],
+  ): Promise<{ direct: CandidateIssue[]; chunks: Prisma.AnalysisChunkCreateManyInput[] }> {
+    const config = LANGUAGE_ENGINE_CONFIG.ambiguity;
+    const { direct, cases } = collectAmbiguities(candidates, state.model, config);
+    const exhausted = cases.length > 0 && (await this.usage.isExhausted());
+    const { batches, overflow } = planBatches(
+      cases,
+      exhausted ? { maxBatches: 0, maxCasesPerBatch: 1 } : config.ai,
+    );
+    this.logger.log(
+      {
+        analysisId: state.analysisId,
+        ambiguousCases: cases.length,
+        sentToAi: cases.length - overflow.length,
+        batches: batches.length,
+        overBudget: overflow.length,
+        dailyBudgetExhausted: exhausted,
+      },
+      'Cas ambigus du moteur de langue',
+    );
+    return {
+      direct: [...direct, ...overflow.flatMap(fallbackIssues)],
+      chunks: batches.map((batch, index) => ({
+        id: newId('chk'),
+        analysisId: state.analysisId,
+        stage: 'verify' as const,
+        index: AMBIGUITY_CHUNK_INDEX + index,
+        blockIds: { kind: 'ambiguity', cases: batch } as unknown as Prisma.InputJsonValue,
+      })),
+    };
+  }
+
+  /** Lot de cas ambigus : décision de l'IA, ou repli de chaque cas si elle échoue. */
+  private async processAmbiguity(state: RunState, plan: AmbiguityChunkPlan) {
+    const config = LANGUAGE_ENGINE_CONFIG.ambiguity.ai;
+    const { issues, usage, stats } = await resolveAmbiguities(
+      this.ai,
+      state.modelFast,
+      plan.cases,
+      config.maxOutputTokens,
+    );
+    this.logger.log(
+      {
+        analysisId: state.analysisId,
+        ...stats,
+        tokensIn: usage.inputTokens,
+        tokensOut: usage.outputTokens,
+      },
+      stats.failed ? 'Cas ambigus : IA indisponible, repli sans IA' : 'Cas ambigus résolus',
+    );
+    return { issues, usage, result: stats };
   }
 
   /**
@@ -609,7 +690,10 @@ export class AnalysisRunner {
   // --- Étape 5 : vérification ciblée des contradictions ------------------------
 
   private async processVerify(state: RunState, chunk: AnalysisChunk) {
-    const plan = chunk.blockIds as unknown as VerifyChunkPlan;
+    const stored = chunk.blockIds as unknown as VerifyChunkPlan | AmbiguityChunkPlan;
+    if ('kind' in stored && stored.kind === 'ambiguity')
+      return this.processAmbiguity(state, stored);
+    const plan = stored as VerifyChunkPlan;
     const a = state.resolver.block(plan.blockA);
     const b = state.resolver.block(plan.blockB);
     const noUsage: TokenUsage = { inputTokens: 0, outputTokens: 0, cachedTokens: 0 };

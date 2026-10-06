@@ -1,4 +1,5 @@
 import type { Confidence, IssueCategory, IssueSeverity, IssueSource } from '@wordfix/shared';
+import type { AmbiguityInfo } from './language/ambiguity/types.js';
 
 /**
  * Problème candidat, avant les contrôles du backend (ancrage, nature, doublons).
@@ -22,4 +23,9 @@ export interface CandidateIssue {
   relatedExcerpts?: Record<string, string>;
   /** Verdict de l'étape de vérification, pour les contradictions. */
   verdict?: 'contradictory' | 'uncertain';
+  /**
+   * Cas ambigu (règles de langue) : corrections possibles et repli sans décision
+   * de l'IA. La remarque elle-même est alors la forme « sans IA » du cas.
+   */
+  ambiguity?: AmbiguityInfo;
 }

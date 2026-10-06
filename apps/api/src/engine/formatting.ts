@@ -15,7 +15,7 @@ const KIND_LABELS: Record<Block['kind'], string> = {
 };
 
 /** Enlève les balises qui pourraient fermer artificiellement la zone de données. */
-function neutralize(text: string): string {
+export function neutralize(text: string): string {
   return text.replace(/<\/?\s*document\s*>/gi, '[balise retirée]');
 }
 

@@ -71,6 +71,23 @@ export function mapGrammarErrors(
     seen.add(key);
 
     const confidence = assessConfidence(block, primary, alternatives.length > 0, config, ambiguous);
+    // Correction incertaine (plusieurs formes, homophone, accord lointain) : cas
+    // ambigu que l'IA pourra départager parmi les corrections de Grammalecte. Sans
+    // décision de l'IA, la remarque reste la même (Suggestion).
+    const options = [
+      ...suggestions.map((replacement) => ({ start: error.start, end: error.end, replacement })),
+      ...alternatives.flatMap((alternative) =>
+        alternative.suggestions.slice(0, 1).map((replacement) => ({
+          start: alternative.error.start,
+          end: alternative.error.end,
+          replacement,
+        })),
+      ),
+    ].slice(0, context.config.ambiguity.maxOptions);
+    const ambiguity =
+      confidence === 'medium' && options.length > 0
+        ? { kind: 'grammar' as const, options, fallback: 'keep' as const }
+        : undefined;
     out.push({
       rule: 'grammar',
       category: 'grammar',
@@ -84,6 +101,7 @@ export function mapGrammarErrors(
       source: 'rules',
       relatedBlockIds: [],
       range: { start: error.start, end: error.end },
+      ...(ambiguity ? { ambiguity } : {}),
     });
   }
   return out.sort((a, b) => a.range.start - b.range.start);

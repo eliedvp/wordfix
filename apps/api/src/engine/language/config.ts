@@ -34,6 +34,41 @@ export interface LanguageEngineConfig {
   };
   spelling: SpellingConfig;
   grammar: GrammarConfig;
+  ambiguity: AmbiguityConfig;
+}
+
+/**
+ * Cas ambigus (voir ambiguity/) : quels cas le moteur prépare pour l'IA, et le
+ * budget IA strict d'une analyse. Seuls ces cas peuvent être envoyés à l'IA.
+ */
+export interface AmbiguityConfig {
+  /** Corrections proposées au plus par cas. */
+  maxOptions: number;
+  /** Mot inconnu ambigu : coût maximal d'une option, fréquence minimale (Zipf). */
+  maxOptionCost: number;
+  minOptionZipf: number;
+  /** Repli « À vérifier » d'un mot inconnu : seulement si une option est à une faute légère. */
+  verifyMaxCost: number;
+  /** Mot très déformé (aucun mot à une faute près) : options de même prononciation, mots courants. */
+  distortedMaxOptionCost: number;
+  distortedMinOptionZipf: number;
+  distortedMinLength: number;
+  distortedMaxLength: number;
+  /** Mots déformés soumis au plus par document : minimum, puis pour 1 000 mots. */
+  distortedLookups: number;
+  distortedLookupsPerThousandWords: number;
+  /** Confusion d'accents (taches / tâches) : écart de fréquence minimal, fréquence minimale. */
+  confusionMinZipfGap: number;
+  confusionMinZipf: number;
+  confusionMinLength: number;
+  /** Budget IA par analyse. */
+  ai: {
+    maxBatches: number;
+    maxCasesPerBatch: number;
+    /** Contexte envoyé par cas (caractères autour du mot, dans sa phrase). */
+    maxContextChars: number;
+    maxOutputTokens: number;
+  };
 }
 
 /** Sous-types WordFix de la catégorie « grammar » (voir la taxonomie partagée). */
@@ -121,6 +156,7 @@ export const LANGUAGE_RULE_IDS = [
   'missing_space_after_comma',
   'misspelling',
   'grammar',
+  'accent_confusion',
 ] as const;
 export type LanguageRuleId = (typeof LANGUAGE_RULE_IDS)[number];
 
@@ -136,6 +172,7 @@ export const LANGUAGE_ENGINE_CONFIG: LanguageEngineConfig = {
     missing_space_after_comma: 10,
     misspelling: 60,
     grammar: 80,
+    accent_confusion: 20,
   },
   capsPerThousandWords: {
     repeated_word: 1,
@@ -146,6 +183,7 @@ export const LANGUAGE_ENGINE_CONFIG: LanguageEngineConfig = {
     missing_space_after_comma: 0.5,
     misspelling: 5,
     grammar: 5,
+    accent_confusion: 0.5,
   },
   repetition: {
     allowedRepeats: ['nous', 'vous'],
@@ -250,5 +288,26 @@ export const LANGUAGE_ENGINE_CONFIG: LanguageEngineConfig = {
     ],
     maxParagraphLength: 20_000,
     batchLength: 40_000,
+  },
+  ambiguity: {
+    maxOptions: 5,
+    maxOptionCost: 1.3,
+    minOptionZipf: 1.5,
+    verifyMaxCost: 0.7,
+    distortedMaxOptionCost: 3,
+    distortedMinOptionZipf: 2.5,
+    distortedMinLength: 5,
+    distortedMaxLength: 20,
+    distortedLookups: 30,
+    distortedLookupsPerThousandWords: 1,
+    confusionMinZipfGap: 0,
+    confusionMinZipf: 3.5,
+    confusionMinLength: 4,
+    ai: {
+      maxBatches: 3,
+      maxCasesPerBatch: 20,
+      maxContextChars: 300,
+      maxOutputTokens: 4_000,
+    },
   },
 };
