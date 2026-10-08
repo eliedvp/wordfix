@@ -16,6 +16,7 @@ import {
   type TokenUsage,
 } from '../ai/ai-provider.js';
 import { aiModels } from '../ai/models.js';
+import { guardAi } from './ai-guard.js';
 import { AiUsageService } from '../ai/usage.service.js';
 import { forEachConcurrent } from '../common/concurrency.js';
 import { AppError } from '../common/errors/app-error.js';
@@ -80,6 +81,8 @@ const AI_FAILURE_CODES: ReadonlySet<string> = new Set<AiErrorKind>([
   'quota',
   'config',
   'invalid_output',
+  // « bad_request » n'en fait volontairement pas partie : une requête refusée signale
+  // un probable bug de WordFix, qui ne doit pas passer pour une simple panne de l'IA.
 ]);
 /** Tentatives par morceau avant de le marquer en échec. */
 const CHUNK_ATTEMPTS = 2;
@@ -102,7 +105,7 @@ interface RunState {
   resolver: LocationResolver;
   modelFast: string;
   modelSmart: string;
-  /** Fournisseur IA de cette analyse (voir guardAi). */
+  /** Fournisseur IA de cette analyse, avec coupe-circuit (voir ai-guard.ts). */
   ai: AiProvider;
 }
 
@@ -180,7 +183,7 @@ export class AnalysisRunner {
         resolver: new LocationResolver(model),
         modelFast: this.modelFast,
         modelSmart: this.modelSmart,
-        ai: this.guardAi(analysisId),
+        ai: guardAi(this.ai, { analysisId, logger: this.logger }),
       };
       if (analysis.chunksTotal === 0) await this.plan(state, warnings);
       this.logger.log({ ...log, stage: 'extract', words: model.meta.wordCount }, 'Document prêt');
@@ -216,36 +219,6 @@ export class AnalysisRunner {
       // Erreur inattendue : BullMQ retentera le job, qui reprendra où il s'est arrêté.
       throw error;
     }
-  }
-
-  /**
-   * Fournisseur IA protégé, propre à une analyse : après une erreur définitive
-   * (quota épuisé, clé ou modèle refusé), les appels suivants échouent aussitôt avec
-   * la même erreur, sans nouvel appel réseau. Chaque étape IA retombe alors sur son
-   * repli et l'analyse se termine avec les résultats du moteur déterministe.
-   */
-  private guardAi(analysisId: string): AiProvider {
-    const ai = this.ai;
-    const logger = this.logger;
-    let halted: AiError | null = null;
-    return {
-      name: ai.name,
-      async generateStructured(request) {
-        if (halted) throw halted;
-        try {
-          return await ai.generateStructured(request);
-        } catch (error) {
-          if (error instanceof AiError && !error.retryable) {
-            halted = error;
-            logger.error(
-              { analysisId, kind: error.kind },
-              'Fournisseur IA inutilisable : suite de l’analyse sans IA',
-            );
-          }
-          throw error;
-        }
-      },
-    };
   }
 
   /** Marque l'analyse en échec définitif (appelé aussi après le dernier essai BullMQ). */
@@ -802,11 +775,15 @@ export class AnalysisRunner {
     const failed = chunks.filter((c) => c.status !== 'DONE');
     // Échecs dus à la couche IA : non bloquants (résultats déterministes conservés).
     const aiFailed = failed.filter((c) => AI_FAILURE_CODES.has(c.errorCode ?? ''));
-    // Lots de cas ambigus terminés en repli parce que l'IA n'a pas répondu.
-    const ambiguityFallback = chunks.some(
-      (c) => c.status === 'DONE' && (c.result as { failed?: unknown } | null)?.failed,
-    );
-    // Échecs internes (hors IA) : ils peuvent toujours faire échouer l'analyse.
+    // Lots de cas ambigus terminés en repli : IA indisponible, ou requête refusée.
+    const ambiguityFailures = chunks
+      .filter((c) => c.status === 'DONE')
+      .map((c) => (c.result as { failed?: unknown } | null)?.failed)
+      .filter((code): code is string => typeof code === 'string');
+    const ambiguityFallback = ambiguityFailures.some((code) => AI_FAILURE_CODES.has(code));
+    const ambiguityInternal = ambiguityFailures.some((code) => !AI_FAILURE_CODES.has(code));
+    // Échecs internes (hors IA, dont les requêtes refusées par le fournisseur, signe
+    // d'un bug WordFix) : ils peuvent toujours faire échouer l'analyse.
     const otherFailed = failed.filter((c) => !AI_FAILURE_CODES.has(c.errorCode ?? ''));
     const core = chunks.filter((c) => c.stage === 'local' || c.stage === 'context');
     const coreOtherFailed = otherFailed.filter((c) => c.stage === 'local' || c.stage === 'context');
@@ -827,7 +804,7 @@ export class AnalysisRunner {
       select: { warnings: true },
     });
     const warnings = new Set((current?.warnings as AnalysisWarning[] | null) ?? []);
-    if (otherFailed.length > 0) warnings.add('PARTIAL_ANALYSIS');
+    if (otherFailed.length > 0 || ambiguityInternal) warnings.add('PARTIAL_ANALYSIS');
     if (aiFailed.length > 0 || ambiguityFallback) warnings.add('AI_CHECKS_SKIPPED');
     if (capped) warnings.add('ISSUES_CAPPED');
 

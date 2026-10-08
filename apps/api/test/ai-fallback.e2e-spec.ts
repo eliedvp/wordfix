@@ -5,11 +5,13 @@ import type { Job } from 'bullmq';
 import request from 'supertest';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AI_PROVIDER, AiError, type AiProvider } from '../src/ai/ai-provider.js';
+import type { FakeAiProvider } from '../src/ai/providers/fake.provider.js';
+import { AI_CIRCUIT_BREAKER_THRESHOLD } from '../src/engine/ai-guard.js';
 import { GeminiAiProvider } from '../src/ai/providers/gemini.provider.js';
 import { AnalysisRunner } from '../src/engine/analysis-runner.js';
 import { AnalysisProcessor } from '../src/processors/analysis.processor.js';
 import type { AnalysisJobData } from '../src/queue/queue.constants.js';
-import { buildDocx } from './fixtures/builders.js';
+import { buildDocx, filler } from './fixtures/builders.js';
 import { reviewDocumentNodes } from './fixtures/review-document.js';
 import { createTestApp, createTestWorker, resetDatabase, waitFor } from './helpers.js';
 
@@ -77,11 +79,34 @@ function geminiWith(fetchImpl: typeof fetch, timeoutMs = 5_000): GeminiAiProvide
   });
 }
 
-/** Fournisseur qui échoue toujours (panne générique du fournisseur). */
-const alwaysFailing = (error: AiError): AiProvider => ({
-  name: 'en-panne',
-  generateStructured: () => Promise.reject(error),
-});
+/** Fournisseur qui échoue toujours (panne générique du fournisseur), en comptant ses appels. */
+const alwaysFailing = (error: AiError): AiProvider & { calls: number } => {
+  const provider = {
+    name: 'en-panne',
+    calls: 0,
+    generateStructured: () => {
+      provider.calls++;
+      return Promise.reject(error);
+    },
+  };
+  return provider;
+};
+
+/** `fetch` simulé qui compte les requêtes envoyées à Gemini. */
+function countingFetch(respond: () => Promise<Response>) {
+  const counter = { calls: 0 };
+  const fetchImpl = (() => {
+    counter.calls++;
+    return respond();
+  }) as typeof fetch;
+  return { counter, fetchImpl };
+}
+
+/**
+ * Appels IA au plus avec le coupe-circuit : le seuil, plus les appels déjà partis en
+ * parallèle quand il se déclenche (AI_CONCURRENCY = 4 par défaut).
+ */
+const MAX_CALLS_WITH_BREAKER = AI_CIRCUIT_BREAKER_THRESHOLD + 4 - 1;
 
 const deterministic = (list: IssueListDto) =>
   list.items
@@ -95,12 +120,19 @@ describe('IA indisponible : l’analyse se termine avec le moteur déterministe'
   let docx: Buffer;
   /** Remarques déterministes d'une analyse avec l'IA disponible (référence). */
   let baseline: IssueListDto;
+  /** Nombre d'appels IA d'une analyse complète avec l'IA disponible. */
+  let callsWhenAvailable = 0;
   /** Remarques déterministes de la première analyse sans IA (identiques pour toute panne). */
   let withoutAi: string[] | undefined;
 
   beforeAll(async () => {
     app = await createTestApp();
-    docx = await buildDocx([...reviewDocumentNodes(), { p: PERIS }]);
+    // Sections supplémentaires : assez de morceaux IA pour que le coupe-circuit se voie.
+    const extra = Array.from({ length: 8 }, (_, i) => [
+      { h: 1 as const, text: `${i + 4}. Partie ${i + 4}` },
+      { p: filler(600, 10 + i) },
+    ]).flat();
+    docx = await buildDocx([...reviewDocumentNodes(), ...extra, { p: PERIS }]);
   });
 
   beforeEach(async () => {
@@ -177,9 +209,14 @@ describe('IA indisponible : l’analyse se termine avec le moteur déterministe'
   }
 
   it('a. IA disponible : analyse complète avec l’enrichissement IA', async () => {
-    await useWorker();
+    const current = await useWorker();
+    const fake = current.get<FakeAiProvider>(AI_PROVIDER);
+    fake.calls = [];
     const run = await analyze();
     baseline = run.issues;
+    callsWhenAvailable = fake.calls.length;
+    // Assez d'appels pour que la limite du coupe-circuit (tests c, d) soit significative.
+    expect(callsWhenAvailable).toBeGreaterThan(MAX_CALLS_WITH_BREAKER);
     expect(run.analysis.status).toBe('COMPLETED');
     expect(run.analysis.warnings).not.toContain('AI_CHECKS_SKIPPED');
     expect(run.issues.items.some((i) => i.source === 'local')).toBe(true);
@@ -214,22 +251,57 @@ describe('IA indisponible : l’analyse se termine avec le moteur déterministe'
           reject(new DOMException('This operation was aborted', 'AbortError')),
         );
       })) as typeof fetch;
-    await useWorker(geminiWith(hanging, 50));
-    expectDeterministicCompletion(await analyze());
-  }, 60_000);
-
-  it('d. limite gratuite Gemini (429, 5 requêtes/minute) : COMPLETED — cas réel signalé', async () => {
+    let calls = 0;
     await useWorker(
-      geminiWith(() =>
-        Promise.resolve(gemini429('GenerateRequestsPerMinutePerProjectPerModel-FreeTier')),
-      ),
+      geminiWith((url: string | URL | Request, init?: RequestInit) => {
+        calls++;
+        return hanging(url, init);
+      }, 50),
     );
     expectDeterministicCompletion(await analyze());
+    // Coupe-circuit : l'analyse n'attend pas un délai dépassé par morceau.
+    expect(calls).toBeLessThanOrEqual(MAX_CALLS_WITH_BREAKER);
+  }, 60_000);
+
+  it('d. limite gratuite Gemini (429, 5 requêtes/minute) : COMPLETED, coupe-circuit — cas réel signalé', async () => {
+    const { counter, fetchImpl } = countingFetch(() =>
+      Promise.resolve(gemini429('GenerateRequestsPerMinutePerProjectPerModel-FreeTier')),
+    );
+    await useWorker(geminiWith(fetchImpl));
+    expectDeterministicCompletion(await analyze());
+    // Sans coupe-circuit, chaque appel IA de l'analyse aurait envoyé sa requête.
+    expect(counter.calls).toBeGreaterThanOrEqual(AI_CIRCUIT_BREAKER_THRESHOLD);
+    expect(counter.calls).toBeLessThanOrEqual(MAX_CALLS_WITH_BREAKER);
+    expect(counter.calls).toBeLessThan(callsWhenAvailable);
   }, 60_000);
 
   it('d bis. fournisseur IA indisponible (toutes les requêtes en échec) : COMPLETED', async () => {
-    await useWorker(alwaysFailing(new AiError('unavailable', 'fournisseur indisponible (503)')));
+    const failing = alwaysFailing(new AiError('unavailable', 'fournisseur indisponible (503)'));
+    await useWorker(failing);
     expectDeterministicCompletion(await analyze());
+    expect(failing.calls).toBeLessThanOrEqual(MAX_CALLS_WITH_BREAKER);
+  }, 60_000);
+
+  it('f. requête refusée par Gemini (400 systématique, bug WordFix) : jamais masquée', async () => {
+    const { counter, fetchImpl } = countingFetch(() =>
+      Promise.resolve(
+        json(400, {
+          error: {
+            code: 400,
+            status: 'INVALID_ARGUMENT',
+            message: 'Invalid JSON payload received.',
+            details: [{ '@type': 'type.googleapis.com/google.rpc.BadRequest' }],
+          },
+        }),
+      ),
+    );
+    await useWorker(geminiWith(fetchImpl));
+    const run = await analyze();
+    // Ni « IA indisponible » ni coupe-circuit : l'échec est visible comme un vrai bug.
+    expect(run.analysis.status).toBe('FAILED');
+    expect(run.analysis.errorCode).toBe('ANALYSIS_FAILED');
+    // Le coupe-circuit ne s'applique pas : chaque morceau a tenté sa requête.
+    expect(counter.calls).toBeGreaterThan(AI_CIRCUIT_BREAKER_THRESHOLD);
   }, 60_000);
 
   it('e. erreur réelle du moteur déterministe : l’analyse échoue (FAILED)', async () => {

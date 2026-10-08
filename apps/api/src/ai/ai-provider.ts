@@ -42,7 +42,13 @@ export type AiErrorKind =
   /** Clé absente ou invalide, modèle inconnu : inutile de réessayer. */
   | 'config'
   /** Réponse hors schéma ou tronquée. */
-  | 'invalid_output';
+  | 'invalid_output'
+  /**
+   * Requête refusée par le fournisseur pour une autre raison que la clé ou le modèle
+   * (paramètre invalide, schéma refusé, entrée trop longue…) : probable bug de WordFix,
+   * à rendre visible plutôt qu'à confondre avec une indisponibilité de l'IA.
+   */
+  | 'bad_request';
 
 export class AiError extends Error {
   constructor(

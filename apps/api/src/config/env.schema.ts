@@ -80,6 +80,17 @@ export const envSchema = z
         message: '« fake » est réservé aux tests automatisés (NODE_ENV=test)',
       });
     }
+    // La politique de confidentialité (page /confidentialite) ne mentionne qu'OpenAI, et
+    // l'offre gratuite de l'API Gemini autorise Google à réutiliser les contenus envoyés :
+    // Gemini reste réservé au développement et aux tests tant qu'elle n'est pas adaptée.
+    if (env.AI_PROVIDER === 'gemini' && env.NODE_ENV === 'production') {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['AI_PROVIDER'],
+        message:
+          '« gemini » est réservé au développement et aux tests tant que la politique de confidentialité ne le mentionne pas',
+      });
+    }
     if (env.STORAGE_DRIVER === 's3') {
       for (const key of [
         'STORAGE_ENDPOINT',

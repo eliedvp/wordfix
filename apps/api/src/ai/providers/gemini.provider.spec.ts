@@ -203,13 +203,60 @@ describe('GeminiAiProvider', () => {
       expect(seen.calls).toBe(1);
     });
 
-    it('modèle inconnu (404) → config', async () => {
+    it.each([
+      [401, 'UNAUTHENTICATED'],
+      [403, 'PERMISSION_DENIED'],
+      [404, 'NOT_FOUND'],
+    ])('%i → config (définitif, sans nouvel essai)', async (code, status) => {
+      const seen: Seen = { calls: 0 };
+      const error = await errorOf(
+        provider(fakeFetch([() => googleError(code, status, 'refusé')], seen), {
+          maxRetries: 3,
+        }).generateStructured(request),
+      );
+      expect(error).toMatchObject({ kind: 'config' });
+      expect((error as AiError).retryable).toBe(false);
+      expect(seen.calls).toBe(1);
+    });
+
+    it('400 compte ou région non autorisés (FAILED_PRECONDITION) → config', async () => {
       const error = await errorOf(
         provider(
-          fakeFetch([() => googleError(404, 'NOT_FOUND', 'models/x is not found')]),
+          fakeFetch([
+            () => googleError(400, 'FAILED_PRECONDITION', 'User location is not supported.'),
+          ]),
         ).generateStructured(request),
       );
       expect(error).toMatchObject({ kind: 'config' });
+    });
+
+    it('autre 400 (schéma ou paramètre refusé) → bad_request, distinct de config', async () => {
+      const seen: Seen = { calls: 0 };
+      const schemaRefused = () =>
+        googleError(400, 'INVALID_ARGUMENT', 'Invalid JSON payload received.', [
+          { '@type': 'type.googleapis.com/google.rpc.BadRequest' },
+        ]);
+      const error = await errorOf(
+        provider(fakeFetch([schemaRefused], seen), { maxRetries: 3 }).generateStructured(request),
+      );
+      expect(error).toBeInstanceOf(AiError);
+      expect(error).toMatchObject({
+        kind: 'bad_request',
+        message: 'requête refusée par le fournisseur (400)',
+      });
+      expect((error as AiError).retryable).toBe(false);
+      expect(seen.calls).toBe(1);
+    });
+
+    it('entrée trop volumineuse (413) → bad_request', async () => {
+      const error = await errorOf(
+        provider(
+          fakeFetch([
+            () => googleError(413, 'INVALID_ARGUMENT', 'Request payload size exceeds the limit'),
+          ]),
+        ).generateStructured(request),
+      );
+      expect(error).toMatchObject({ kind: 'bad_request' });
     });
 
     it('quota quotidien épuisé (429) → quota, sans nouvel essai', async () => {

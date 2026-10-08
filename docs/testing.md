@@ -15,8 +15,8 @@ Le fournisseur IA `fake` (réponses déterministes) n'existe que pour les tests 
 
 ### Bases dédiées
 
-- Intégration : `wordfix_test` (recréée à chaque lancement) et Redis n° 15. Créez-la une fois : `docker compose exec postgres createdb -U wordfix wordfix_test`. Variables : `TEST_DATABASE_URL`, `TEST_REDIS_URL`.
-- E2E : `wordfix_e2e` (créée automatiquement) et Redis n° 14 ; l'API de test écoute sur le port 4000 : arrêtez `pnpm dev` avant. Variables : `E2E_DATABASE_URL`, `E2E_REDIS_URL`.
+- Intégration : `wordfix_test` (recréée à chaque lancement) et Redis n° 15. Créez-la une fois : `docker compose exec postgres createdb -U wordfix wordfix_test`. Variables : `TEST_DATABASE_URL`, `TEST_REDIS_URL` ; sans `TEST_DATABASE_URL`, la base de test utilise le port `POSTGRES_PORT` (environnement, puis `.env`), sinon 5432.
+- E2E : `wordfix_e2e` (créée automatiquement) et Redis n° 14 ; l'API de test écoute sur le port 4000 : arrêtez `pnpm dev` avant. Variables : `E2E_DATABASE_URL`, `E2E_REDIS_URL` ; sans `E2E_DATABASE_URL`, la base E2E utilise le port `POSTGRES_PORT` (environnement, puis `.env`), sinon 5432.
 
 ## Corpus de documents (`apps/api/test/fixtures/corpus.ts`)
 

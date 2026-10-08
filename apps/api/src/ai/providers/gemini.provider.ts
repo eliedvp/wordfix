@@ -254,14 +254,23 @@ export function translateGeminiError(error: unknown): AiError {
           });
     }
     if (status === 400) {
-      const keyRefused = body.error?.details?.some((d) => d.reason === 'API_KEY_INVALID');
-      return new AiError(
-        'config',
-        keyRefused
-          ? 'clé refusée par le fournisseur (400)'
-          : 'requête refusée par le fournisseur (400)',
-        { cause: error },
-      );
+      // Définitif (configuration) : clé invalide, ou compte/région non autorisés
+      // (FAILED_PRECONDITION, ex. « User location is not supported »).
+      if (body.error?.details?.some((d) => d.reason === 'API_KEY_INVALID')) {
+        return new AiError('config', 'clé refusée par le fournisseur (400)', { cause: error });
+      }
+      if (body.error?.status === 'FAILED_PRECONDITION') {
+        return new AiError('config', 'compte ou région non autorisés par le fournisseur (400)', {
+          cause: error,
+        });
+      }
+    }
+    if (status >= 400 && status < 500 && status !== 408) {
+      // Toute autre requête refusée (paramètre ou schéma invalide, entrée trop longue…) :
+      // probable bug de WordFix, distingué d'une indisponibilité et jamais masqué.
+      return new AiError('bad_request', `requête refusée par le fournisseur (${status})`, {
+        cause: error,
+      });
     }
     return new AiError('unavailable', `fournisseur indisponible (${status})`, { cause: error });
   }

@@ -23,4 +23,28 @@ describe('validateEnv', () => {
   it('convertit le port en nombre', () => {
     expect(validateEnv({ ...base, API_PORT: '4100' }).API_PORT).toBe(4100);
   });
+
+  describe('fournisseur IA selon l’environnement', () => {
+    it.each(['development', 'test'] as const)('Gemini est accepté en %s', (NODE_ENV) => {
+      expect(validateEnv({ ...base, NODE_ENV, AI_PROVIDER: 'gemini' }).AI_PROVIDER).toBe('gemini');
+    });
+
+    it('Gemini est refusé en production (confidentialité)', () => {
+      expect(() =>
+        validateEnv({ ...base, NODE_ENV: 'production', AI_PROVIDER: 'gemini' }),
+      ).toThrowError(/AI_PROVIDER[\s\S]*confidentialité/);
+    });
+
+    it('le faux fournisseur reste refusé en production', () => {
+      expect(() =>
+        validateEnv({ ...base, NODE_ENV: 'production', AI_PROVIDER: 'fake' }),
+      ).toThrowError(/AI_PROVIDER[\s\S]*tests automatisés/);
+    });
+
+    it('OpenAI reste accepté en production', () => {
+      expect(
+        validateEnv({ ...base, NODE_ENV: 'production', AI_PROVIDER: 'openai' }).AI_PROVIDER,
+      ).toBe('openai');
+    });
+  });
 });
