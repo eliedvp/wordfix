@@ -45,6 +45,8 @@ export interface DocumentDto {
 
 export type AnalysisWarning =
   | 'PARTIAL_ANALYSIS'
+  /** Une partie des vérifications par IA n'a pas pu être faite (fournisseur indisponible, quota…). */
+  | 'AI_CHECKS_SKIPPED'
   | 'HEADINGS_INFERRED'
   | 'NON_FRENCH_DOCUMENT'
   | 'PARSER_FALLBACK'

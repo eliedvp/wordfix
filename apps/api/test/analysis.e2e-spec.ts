@@ -173,24 +173,19 @@ describe('Analyse complète (API + file BullMQ + worker + moteur)', () => {
     }
   });
 
-  it('échoue proprement si le fournisseur IA est indisponible, puis permet de relancer', async () => {
+  it('termine l’analyse sans IA si le fournisseur est indisponible (résultats déterministes)', async () => {
     const agent = request.agent(app.getHttpServer());
     fake.failNext = new AiError('unavailable', 'panne simulée');
-    const { documentId, analysisId } = await uploadAndAnalyze(agent);
+    const { analysisId } = await uploadAndAnalyze(agent);
 
-    const failed = await waitFor(
+    const done = await waitFor(
       () => getAnalysis(agent, analysisId),
       (a) => a.status === 'FAILED' || a.status === 'COMPLETED',
     );
-    expect(failed.status).toBe('FAILED');
-    expect(failed.errorCode).toBe('AI_UNAVAILABLE');
-
-    const retry = await agent.post(`/api/documents/${documentId}/analyze`).expect(202);
-    const done = await waitFor(
-      () => getAnalysis(agent, retry.body.analysisId as string),
-      (a) => a.status === 'COMPLETED' || a.status === 'FAILED',
-    );
     expect(done.status).toBe('COMPLETED');
+    expect(done.errorCode).toBeNull();
+    expect(done.warnings).toContain('AI_CHECKS_SKIPPED');
+    expect(done.warnings).not.toContain('PARTIAL_ANALYSIS');
   });
 
   it('reprend une analyse interrompue sans refaire les morceaux déjà traités', async () => {

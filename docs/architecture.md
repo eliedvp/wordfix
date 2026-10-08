@@ -35,7 +35,7 @@ L'API et le worker partagent le même code (`infrastructureImports` dans `app.mo
 
 ## Moteur et IA
 
-- `ai/ai-provider.ts` : interface unique ; `OpenAiProvider` (Responses API, sortie JSON stricte, `store: false`) ; `FakeAiProvider` réservé aux tests.
+- `ai/ai-provider.ts` : interface unique ; `OpenAiProvider` (Responses API, sortie JSON stricte, `store: false`) ; `GeminiAiProvider` (SDK officiel `@google/genai`, `generateContent` sans état, sortie JSON contrainte par `responseJsonSchema`, `AI_PROVIDER=gemini`, modèles `GEMINI_MODEL_*`) pour les essais ; `FakeAiProvider` réservé aux tests. Les règles de l'étape C (option parmi les candidats, jamais d'Erreur) sont dans le moteur, communes à tous les fournisseurs.
 - `engine/language/` : WordFix Language Engine, analyse linguistique déterministe et locale (répétitions, typographie, phrases longues) ; voir [`language-engine.md`](language-engine.md). `engine/rules/rules.ts` l'appelle et garde les règles portant sur le document entier (numérotation, sommaire, sigles, graphies).
 - `engine/schemas.ts` : schémas zod des réponses, convertis en JSON Schema strict (`ai/strict-json-schema.ts`).
 - `engine/prompts/prompts.v1.ts` : consignes versionnées (`PROMPT_VERSION` enregistrée sur chaque analyse).

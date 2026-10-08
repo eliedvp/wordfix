@@ -46,12 +46,14 @@ export const envSchema = z
     STORAGE_SECRET_KEY: z.string().optional(),
     STORAGE_BUCKET: z.string().optional(),
 
-    // IA. Ne jamais committer de vraie clé. Le fournisseur « fake » (réponses
-    // déterministes) n'existe que pour les tests automatisés : refusé hors NODE_ENV=test.
-    AI_PROVIDER: z.enum(['openai', 'fake']).default('openai'),
+    // IA. Ne jamais committer de vraie clé.
+    AI_PROVIDER: z.enum(['openai', 'gemini', 'fake']).default('openai'),
     OPENAI_API_KEY: z.string().optional(),
+    GEMINI_API_KEY: z.string().optional(),
     AI_MODEL_FAST: z.string().min(1).default('gpt-5.4-mini'),
     AI_MODEL_SMART: z.string().min(1).default('gpt-5.4'),
+    GEMINI_MODEL_FAST: z.string().min(1).default('gemini-3.8-flash'),
+    GEMINI_MODEL_SMART: z.string().min(1).default('gemini-3.8-flash'),
     AI_REASONING_EFFORT: z.enum(['none', 'minimal', 'low', 'medium', 'high']).default('low'),
     AI_TIMEOUT_MS: z.coerce.number().int().min(5_000).default(120_000),
     AI_MAX_RETRIES: z.coerce.number().int().min(0).max(6).default(3),
@@ -62,13 +64,16 @@ export const envSchema = z
 
     // Worker d'analyse.
     WORKER_CONCURRENCY: z.coerce.number().int().min(1).max(16).default(2),
+
+    // Vérification grammaticale (worker) : Grammalecte, exécuté localement par Python 3.
+    GRAMMAR_ENGINE: z.enum(['grammalecte', 'off']).default('grammalecte'),
+    GRAMMALECTE_PYTHON: z
+      .string()
+      .min(1)
+      .default(process.platform === 'win32' ? 'python' : 'python3'),
   })
   .superRefine((env, ctx) => {
-    if (
-  env.AI_PROVIDER === 'fake' &&
-  env.NODE_ENV === 'production'
-  
-) {
+    if (env.AI_PROVIDER === 'fake' && env.NODE_ENV === 'production') {
       ctx.addIssue({
         code: 'custom',
         path: ['AI_PROVIDER'],

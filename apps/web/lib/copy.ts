@@ -29,6 +29,8 @@ export const STEP_LABELS: Record<AnalysisStepKey, { title: string; detail: strin
 export const WARNING_TEXTS: Record<AnalysisWarning, string> = {
   PARTIAL_ANALYSIS:
     'Certaines parties n’ont pas pu être analysées. Les résultats affichés restent valables pour le reste du document.',
+  AI_CHECKS_SKIPPED:
+    'Certaines vérifications avancées par IA n’ont pas pu être effectuées. Les résultats affichés proviennent des vérifications automatiques de WordFix.',
   HEADINGS_INFERRED:
     'Vos titres ne sont pas mis en forme avec les styles « Titre » de Word : ils ont été déduits de leur apparence. Les sections indiquées peuvent être approximatives.',
   NON_FRENCH_DOCUMENT:

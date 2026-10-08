@@ -8,7 +8,14 @@ import {
   MAX_DOCUMENT_WORDS,
   PARSER_VERSION,
 } from '@wordfix/shared';
-import { AI_PROVIDER, AiError, type AiProvider, type TokenUsage } from '../ai/ai-provider.js';
+import {
+  AI_PROVIDER,
+  AiError,
+  type AiErrorKind,
+  type AiProvider,
+  type TokenUsage,
+} from '../ai/ai-provider.js';
+import { aiModels } from '../ai/models.js';
 import { AiUsageService } from '../ai/usage.service.js';
 import { forEachConcurrent } from '../common/concurrency.js';
 import { AppError } from '../common/errors/app-error.js';
@@ -58,8 +65,22 @@ import type { CandidateIssue } from './types.js';
 const LOCAL_MAX_ISSUES = 25;
 const LOCAL_MAX_STYLE = 8;
 const MAX_VERIFICATIONS = 10;
-/** Au-delà de cette part de morceaux en échec, l'analyse est considérée comme ratée. */
+/**
+ * Au-delà de cette part de morceaux en échec pour une cause interne (hors IA),
+ * l'analyse est considérée comme ratée.
+ */
 const MAX_FAILED_RATIO = 0.1;
+/**
+ * Codes d'échec d'un morceau dus à la seule couche IA (fournisseur indisponible,
+ * quota, configuration, réponse invalide). L'IA est un enrichissement facultatif :
+ * ces échecs ne font jamais échouer une analyse que le moteur déterministe a pu mener.
+ */
+const AI_FAILURE_CODES: ReadonlySet<string> = new Set<AiErrorKind>([
+  'unavailable',
+  'quota',
+  'config',
+  'invalid_output',
+]);
 /** Tentatives par morceau avant de le marquer en échec. */
 const CHUNK_ATTEMPTS = 2;
 
@@ -81,6 +102,8 @@ interface RunState {
   resolver: LocationResolver;
   modelFast: string;
   modelSmart: string;
+  /** Fournisseur IA de cette analyse (voir guardAi). */
+  ai: AiProvider;
 }
 
 interface LocalChunkPlan {
@@ -128,8 +151,9 @@ export class AnalysisRunner {
     config: ConfigService<Env, true>,
   ) {
     this.concurrency = config.get('AI_CONCURRENCY', { infer: true });
-    this.modelFast = config.get('AI_MODEL_FAST', { infer: true });
-    this.modelSmart = config.get('AI_MODEL_SMART', { infer: true });
+    const models = aiModels(config);
+    this.modelFast = models.fast;
+    this.modelSmart = models.smart;
     this.grammarEnabled = config.get('GRAMMAR_ENGINE', { infer: true }) === 'grammalecte';
   }
 
@@ -156,6 +180,7 @@ export class AnalysisRunner {
         resolver: new LocationResolver(model),
         modelFast: this.modelFast,
         modelSmart: this.modelSmart,
+        ai: this.guardAi(analysisId),
       };
       if (analysis.chunksTotal === 0) await this.plan(state, warnings);
       this.logger.log({ ...log, stage: 'extract', words: model.meta.wordCount }, 'Document prêt');
@@ -191,6 +216,36 @@ export class AnalysisRunner {
       // Erreur inattendue : BullMQ retentera le job, qui reprendra où il s'est arrêté.
       throw error;
     }
+  }
+
+  /**
+   * Fournisseur IA protégé, propre à une analyse : après une erreur définitive
+   * (quota épuisé, clé ou modèle refusé), les appels suivants échouent aussitôt avec
+   * la même erreur, sans nouvel appel réseau. Chaque étape IA retombe alors sur son
+   * repli et l'analyse se termine avec les résultats du moteur déterministe.
+   */
+  private guardAi(analysisId: string): AiProvider {
+    const ai = this.ai;
+    const logger = this.logger;
+    let halted: AiError | null = null;
+    return {
+      name: ai.name,
+      async generateStructured(request) {
+        if (halted) throw halted;
+        try {
+          return await ai.generateStructured(request);
+        } catch (error) {
+          if (error instanceof AiError && !error.retryable) {
+            halted = error;
+            logger.error(
+              { analysisId, kind: error.kind },
+              'Fournisseur IA inutilisable : suite de l’analyse sans IA',
+            );
+          }
+          throw error;
+        }
+      },
+    };
   }
 
   /** Marque l'analyse en échec définitif (appelé aussi après le dernier essai BullMQ). */
@@ -358,7 +413,7 @@ export class AnalysisRunner {
   private async processAmbiguity(state: RunState, plan: AmbiguityChunkPlan) {
     const config = LANGUAGE_ENGINE_CONFIG.ambiguity.ai;
     const { issues, usage, stats } = await resolveAmbiguities(
-      this.ai,
+      state.ai,
       state.modelFast,
       plan.cases,
       config.maxOutputTokens,
@@ -435,8 +490,9 @@ export class AnalysisRunner {
             return;
           } catch (error) {
             if (error instanceof AnalysisStopped) throw error;
+            // Une erreur IA, même définitive, ne concerne que ce morceau : il est
+            // marqué en échec et l'analyse continue (repli sans IA).
             const aiError = error instanceof AiError ? error : null;
-            if (aiError && !aiError.retryable) throw aiError;
             if (attempt < CHUNK_ATTEMPTS && aiError?.kind === 'invalid_output') continue;
             await this.prisma.analysisChunk.update({
               where: { id: chunk.id },
@@ -529,7 +585,7 @@ export class AnalysisRunner {
       if (block) parts.push(formatBlock(block, state.resolver.sectionPath(block)));
     }
 
-    const { data, usage } = await this.ai.generateStructured({
+    const { data, usage } = await state.ai.generateStructured({
       model: state.modelFast,
       instructions: LOCAL_INSTRUCTIONS,
       input: wrapDocument(parts.join('\n\n')),
@@ -568,7 +624,7 @@ export class AnalysisRunner {
       wrapDocument(body.join('\n\n')),
     ].join('\n\n');
 
-    const { data, usage } = await this.ai.generateStructured({
+    const { data, usage } = await state.ai.generateStructured({
       model: state.modelSmart,
       instructions: CONTEXT_INSTRUCTIONS,
       input,
@@ -623,7 +679,7 @@ export class AnalysisRunner {
       ].join('\n');
     });
 
-    const { data, usage } = await this.ai.generateStructured({
+    const { data, usage } = await state.ai.generateStructured({
       model: state.modelSmart,
       instructions: GLOBAL_INSTRUCTIONS,
       input: wrapDocument(
@@ -706,7 +762,7 @@ export class AnalysisRunner {
       ),
     ].join('\n\n');
 
-    const { data, usage } = await this.ai.generateStructured({
+    const { data, usage } = await state.ai.generateStructured({
       model: state.modelFast,
       instructions: VERIFY_INSTRUCTIONS,
       input,
@@ -741,15 +797,22 @@ export class AnalysisRunner {
   private async finalize(state: RunState): Promise<void> {
     const chunks = await this.prisma.analysisChunk.findMany({
       where: { analysisId: state.analysisId },
-      select: { stage: true, status: true, errorCode: true },
+      select: { stage: true, status: true, errorCode: true, result: true },
     });
-    const core = chunks.filter((c) => c.stage === 'local' || c.stage === 'context');
     const failed = chunks.filter((c) => c.status !== 'DONE');
-    const coreFailed = core.filter((c) => c.status !== 'DONE');
+    // Échecs dus à la couche IA : non bloquants (résultats déterministes conservés).
+    const aiFailed = failed.filter((c) => AI_FAILURE_CODES.has(c.errorCode ?? ''));
+    // Lots de cas ambigus terminés en repli parce que l'IA n'a pas répondu.
+    const ambiguityFallback = chunks.some(
+      (c) => c.status === 'DONE' && (c.result as { failed?: unknown } | null)?.failed,
+    );
+    // Échecs internes (hors IA) : ils peuvent toujours faire échouer l'analyse.
+    const otherFailed = failed.filter((c) => !AI_FAILURE_CODES.has(c.errorCode ?? ''));
+    const core = chunks.filter((c) => c.stage === 'local' || c.stage === 'context');
+    const coreOtherFailed = otherFailed.filter((c) => c.stage === 'local' || c.stage === 'context');
 
-    if (core.length > 0 && coreFailed.length / core.length > MAX_FAILED_RATIO) {
-      const availability = coreFailed.some((c) => c.errorCode === 'unavailable');
-      await this.markFailed(state.analysisId, availability ? 'AI_UNAVAILABLE' : 'ANALYSIS_FAILED');
+    if (core.length > 0 && coreOtherFailed.length / core.length > MAX_FAILED_RATIO) {
+      await this.markFailed(state.analysisId, 'ANALYSIS_FAILED');
       return;
     }
 
@@ -764,7 +827,8 @@ export class AnalysisRunner {
       select: { warnings: true },
     });
     const warnings = new Set((current?.warnings as AnalysisWarning[] | null) ?? []);
-    if (failed.length > 0) warnings.add('PARTIAL_ANALYSIS');
+    if (otherFailed.length > 0) warnings.add('PARTIAL_ANALYSIS');
+    if (aiFailed.length > 0 || ambiguityFallback) warnings.add('AI_CHECKS_SKIPPED');
     if (capped) warnings.add('ISSUES_CAPPED');
 
     const updated = await this.prisma.analysis.updateMany({
