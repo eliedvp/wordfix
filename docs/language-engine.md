@@ -27,7 +27,7 @@ Code : `apps/api/src/engine/language/`.
 - Juste avant, la planification fait vérifier la grammaire de tout le document par Grammalecte (processus Python unique du worker, lots de paragraphes) ; les erreurs obtenues sont transmises au moteur, qui reste synchrone. Si Grammalecte est désactivé ou indisponible, l'analyse continue sans vérification grammaticale.
 - Ses problèmes ont la source `rules` (déterministe) ; `local`, `context`, `global` et `verify` désignent l'IA.
 - Quand une règle et l'IA signalent le même endroit (même paragraphe, positions qui se chevauchent, même famille de problème), la finalisation n'en garde qu'un, le plus sûr ; à égalité, celui de la règle.
-- Le moteur ne dépend d'aucun fournisseur d'IA : il fonctionne de la même façon avec OpenAI ou avec `AI_PROVIDER=fake`.
+- Le moteur ne dépend d'aucun fournisseur d'IA : il fonctionne de la même façon avec OpenAI, Gemini (`AI_PROVIDER=gemini`) ou `AI_PROVIDER=fake`.
 
 ## Déterministe ou IA
 
@@ -198,9 +198,41 @@ Grammalecte est distribué sous **GNU GPL v3** (pas l'AGPL). Conséquences pour 
 
 Ce point est une analyse technique, pas un avis juridique : à faire valider avant toute distribution du logiciel (hors SaaS).
 
+## Cas ambigus : l'IA départage (étape C)
+
+Code : `ambiguity/` (cas, budget, résolution), `analyzers/accent-confusion.analyzer.ts`, `spelling/phonetic.ts` ; consignes `AMBIGUITY_INSTRUCTIONS` (`prompts.v1.ts`, version v1.1), schéma `ambiguityResolutionSchema` (`schemas.ts`).
+
+Le moteur déterministe reste le premier juge. Il ne confie à l'IA que les cas qu'il ne peut pas trancher, avec **ses propres candidats** :
+
+| Cas                                                           | Exemple                               | Options (déterministes)                                                                   | Sans décision de l'IA                                                        |
+| ------------------------------------------------------------- | ------------------------------------- | ----------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| Mot inconnu, plusieurs corrections proches (confiance faible) | « peris » → permis ? péris ? paris ?  | suggestions nspell classées (coût ≤ 1,3, mots assez courants), 5 au plus                  | **À vérifier** si une option est à une faute légère (coût ≤ 0,7), sinon rien |
+| Suggestion avec d'autres formes proches                       | « heureus » → heureux / heureuse      | la suggestion et ses alternatives                                                         | la Suggestion déterministe                                                   |
+| Mot très déformé (aucun mot à une faute près)                 | « comunikation », « akeuil »          | mots du dictionnaire de même **clé phonétique**, courants                                 | rien                                                                         |
+| Accent oublié sur un mot qui en forme un autre                | « les taches qui m'ont été confiées » | variante plus accentuée, au moins aussi fréquente (jamais un participe : décide / décidé) | rien                                                                         |
+| Grammaire à plusieurs corrections (confiance moyenne)         | « on terminé », « Ils a »             | corrections de Grammalecte (et alternatives)                                              | la Suggestion déterministe                                                   |
+
+Jamais de cas pour : une correction sûre (Erreur), un mot en majuscule (nom propre possible), un sigle, un terme technique, un mot anglais, un mot répété dans le document, une zone protégée.
+
+**Ce qui est envoyé** : pour chaque cas, le mot, sa phrase (300 caractères au plus, fenêtre autour du mot), une information linguistique en une phrase et les options. Jamais le document entier ni les autres paragraphes. Un même mot dans la même phrase (paragraphe recopié) n'est envoyé qu'une fois.
+
+**Réponse** (JSON validé par Zod) : pour chaque cas, `caseId`, `decision` (`correct` | `keep` | `verify`), `correction` (une option recopiée, ou null), `justification` courte, `confidence`.
+
+**Règles de sécurité** (`ambiguity/resolve.ts`) :
+
+- une correction absente des options est refusée ; le cas garde son repli ;
+- une décision de l'IA n'est **jamais une Erreur** : au mieux une Suggestion (confiance moyenne), quelle que soit la confiance annoncée ; une confiance « faible » vaut « verify » ;
+- `keep` (le mot écrit est juste) retire un mot inconnu ou une confusion, mais une faute de Grammalecte n'est jamais effacée : elle devient À vérifier ;
+- `verify` : À vérifier (sans correction) ; pour une confusion d'accents, rien ;
+- IA indisponible, réponse hors schéma, plafond quotidien de jetons atteint : chaque cas garde son repli, l'analyse continue.
+
+**Budget par analyse** (`LANGUAGE_ENGINE_CONFIG.ambiguity.ai`) : 3 lots au plus, 20 cas par lot (60 cas), 300 caractères de contexte par cas, 4 000 jetons de sortie par lot. Priorité : mots inconnus, mots déformés, grammaire, accents. Les cas hors budget gardent leur repli. Les lots sont des morceaux de l'étape « verify » (index ≥ 100) : reprenables, jamais payés deux fois, jetons enregistrés sur le morceau et l'analyse. Logs : « Cas ambigus du moteur de langue » (cas, envoyés, lots, hors budget) et « Cas ambigus résolus » (décisions, jetons).
+
+Coût mesuré (jetons d'entrée et de sortie visibles, tokenizer o200k ; les jetons de raisonnement du modèle s'y ajoutent) : ≈ 0,5 k + 0,1 k pour 1 000 mots, ≈ 2,7 k + 0,8 k pour 10 000 mots, ≈ 5,9 k + 2,0 k pour 60 000 mots (plafond atteint).
+
 ## Configuration
 
-Tous les seuils sont dans `engine/language/config.ts` (`LANGUAGE_ENGINE_CONFIG`) : types de paragraphes analysés, plafonds par règle, exceptions de répétition, seuil de phrase longue, détection des énumérations, pour l'orthographe (`spelling`) longueurs de mots, nombre de suggestions examinées, budget de recherches, seuil de répétition, coûts et écarts de confiance, et pour la grammaire (`grammar`) options Grammalecte retenues et leur sous-type, options à confiance élevée, homophones, taille des lots. Un moteur avec d'autres réglages s'obtient par `createLanguageEngine(config)`.
+Tous les seuils sont dans `engine/language/config.ts` (`LANGUAGE_ENGINE_CONFIG`, dont `ambiguity` pour les cas ambigus et le budget IA) : types de paragraphes analysés, plafonds par règle, exceptions de répétition, seuil de phrase longue, détection des énumérations, pour l'orthographe (`spelling`) longueurs de mots, nombre de suggestions examinées, budget de recherches, seuil de répétition, coûts et écarts de confiance, et pour la grammaire (`grammar`) options Grammalecte retenues et leur sous-type, options à confiance élevée, homophones, taille des lots. Un moteur avec d'autres réglages s'obtient par `createLanguageEngine(config)`.
 
 ## Ajouter un analyseur
 
@@ -220,7 +252,7 @@ pnpm --filter @wordfix/api exec vitest run --project unit src/engine   # moteur 
 pnpm test:integration                                                   # pipeline complet + corpus de 13 documents
 ```
 
-`analyzers/spelling.analyzer.spec.ts` couvre l'orthographe (mots corrects, fautes inconnues, noms propres, sigles, URL, e-mails, chemins, termes techniques, casse, accents, plusieurs fautes, doublons, 60 000 mots, chargement unique du dictionnaire). Les tests qui utilisent le moteur chargent les dictionnaires une fois par fichier (≈ 5 s). Le bloc « calibration » couvre la fréquence, les accents oubliés face aux anglicismes, les noms après un titre, les graphies rectifiées, les fautes répétées, les règles de confiance et le budget proportionnel ; `spelling/calibration.spec.ts` teste chaque règle isolément (liste de fréquences, rectifications, accents, titres et initiales, plafonds).
+`analyzers/spelling.analyzer.spec.ts` couvre l'orthographe (mots corrects, fautes inconnues, noms propres, sigles, URL, e-mails, chemins, termes techniques, casse, accents, plusieurs fautes, doublons, 60 000 mots, chargement unique du dictionnaire). Les tests qui utilisent le moteur chargent les dictionnaires une fois par fichier (≈ 5 s). Le bloc « calibration » couvre la fréquence, les accents oubliés face aux anglicismes, les noms après un titre, les graphies rectifiées, les fautes répétées, les règles de confiance et le budget proportionnel ; `spelling/calibration.spec.ts` teste chaque règle isolément (liste de fréquences, rectifications, accents, titres et initiales, plafonds). `ambiguity/ambiguity.spec.ts` couvre l'étape C avec le faux fournisseur (peris, cadr, taches/tâches, mot déformé, aucun candidat, nom propre, terme technique, aucun appel pour les cas sûrs, budget, réponse invalide, IA indisponible) ; `test/ambiguity.e2e-spec.ts` la chaîne complète. `ambiguity/ambiguity-gemini.spec.ts` rejoue l'étape C avec `GeminiAiProvider` (SDK réel, réponses HTTP simulées, aucun appel réseau) : mêmes règles de sécurité qu'avec OpenAI (correction inventée refusée, jamais d'Erreur, repli en cas de quota ou de réponse hors schéma).
 
 `analyzers/grammar.analyzer.spec.ts` lance le vrai Grammalecte (Python 3 requis) : « Les serveur », « on terminé », a/à, « une belle projet », participes, accords sujet-verbe, alternatives regroupées, homophones, positions exactes (y compris après un emoji), aucun faux positif sur noms propres et termes techniques, apostrophes droites, document propre, compatibilité avec le pipeline et 60 000 mots. `grammar/mapping.spec.ts` teste le filtrage seul, `grammar/grammalecte-client.spec.ts` le processus (lancement unique, délai dépassé et relance, Python absent), `grammar/check-document.spec.ts` le découpage en lots. `test/grammar.e2e-spec.ts` couvre la chaîne complète DOCX → extraction → Grammalecte → remarques de l'API.
 

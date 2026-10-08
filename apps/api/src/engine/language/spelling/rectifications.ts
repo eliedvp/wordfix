@@ -22,12 +22,12 @@ export function isRectifiedSpelling(word: string, dictionary: SpellChecker): boo
 }
 
 /**
- * Terminaisons du passé simple où le circonflexe reste obligatoire (nous vînmes,
- * vous fûtes). Au subjonctif imparfait (qu'il fût), la forme sans accent est déjà
- * un mot du dictionnaire (fut) : elle n'arrive jamais ici.
+ * Terminaisons du passé simple où le circonflexe reste obligatoire et dont la forme
+ * sans accent n'est pas un mot (nous vînmes, vous tîntes). Les autres formes du
+ * passé simple sans circonflexe (fumes, futes) sont rares ; une exclusion plus large
+ * refuserait des noms courants (voutes, croutes, abimes).
  */
-const KEEPS_CIRCUMFLEX = /[îû]n?(?:mes|tes)$/u;
-/** « è » suivi de consonnes puis d'un « e » muet (pas é, è, ê) : évènement, règlement. */
+const KEEPS_CIRCUMFLEX = /[îû]n(?:mes|tes)$/u;
 const GRAVE_BEFORE_MUTE = /è(?=[bcdfghjklmnpqrstvwxz]{1,3}e)/g;
 
 function classicForms(word: string): string[] {

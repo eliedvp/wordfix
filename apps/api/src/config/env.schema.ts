@@ -46,12 +46,14 @@ export const envSchema = z
     STORAGE_SECRET_KEY: z.string().optional(),
     STORAGE_BUCKET: z.string().optional(),
 
-    // IA. Ne jamais committer de vraie clé. Le fournisseur « fake » (réponses
-    // déterministes) n'existe que pour les tests automatisés : refusé hors NODE_ENV=test.
-    AI_PROVIDER: z.enum(['openai', 'fake']).default('openai'),
+    // IA. Ne jamais committer de vraie clé.
+    AI_PROVIDER: z.enum(['openai', 'gemini', 'fake']).default('openai'),
     OPENAI_API_KEY: z.string().optional(),
+    GEMINI_API_KEY: z.string().optional(),
     AI_MODEL_FAST: z.string().min(1).default('gpt-5.4-mini'),
     AI_MODEL_SMART: z.string().min(1).default('gpt-5.4'),
+    GEMINI_MODEL_FAST: z.string().min(1).default('gemini-3.8-flash'),
+    GEMINI_MODEL_SMART: z.string().min(1).default('gemini-3.8-flash'),
     AI_REASONING_EFFORT: z.enum(['none', 'minimal', 'low', 'medium', 'high']).default('low'),
     AI_TIMEOUT_MS: z.coerce.number().int().min(5_000).default(120_000),
     AI_MAX_RETRIES: z.coerce.number().int().min(0).max(6).default(3),
@@ -76,6 +78,17 @@ export const envSchema = z
         code: 'custom',
         path: ['AI_PROVIDER'],
         message: '« fake » est réservé aux tests automatisés (NODE_ENV=test)',
+      });
+    }
+    // La politique de confidentialité (page /confidentialite) ne mentionne qu'OpenAI, et
+    // l'offre gratuite de l'API Gemini autorise Google à réutiliser les contenus envoyés :
+    // Gemini reste réservé au développement et aux tests tant qu'elle n'est pas adaptée.
+    if (env.AI_PROVIDER === 'gemini' && env.NODE_ENV === 'production') {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['AI_PROVIDER'],
+        message:
+          '« gemini » est réservé au développement et aux tests tant que la politique de confidentialité ne le mentionne pas',
       });
     }
     if (env.STORAGE_DRIVER === 's3') {

@@ -7,7 +7,9 @@ import { followsTitleOrInitial, isSentenceStart } from '../text.js';
 import { accentedVariant } from './accents.js';
 import { getSpellingDictionaries, loadSpellingDictionaries } from './dictionaries.js';
 import { parseFrequencies } from './frequency.js';
+import { phoneticKey, soundsLike } from './phonetic.js';
 import { isRectifiedSpelling } from './rectifications.js';
+import { ZipfFrequency } from './frequency.js';
 
 function blockOf(text: string, sentences: [number, number][]): Block {
   return {
@@ -58,6 +60,9 @@ describe('Calibration du moteur (étape A)', () => {
         'évènement',
         'règlementaire',
         'ambigüe',
+        'voutes',
+        'croutes',
+        'abimes',
         'Maitrise',
       ]) {
         expect(isRectifiedSpelling(word, french), word).toBe(true);
@@ -66,7 +71,7 @@ describe('Calibration du moteur (étape A)', () => {
 
     it('refuse les fautes et le passé simple sans circonflexe', () => {
       const { french } = getSpellingDictionaries();
-      for (const word of ['mèthode', 'vinmes', 'futes', 'connaitrre', 'probème']) {
+      for (const word of ['mèthode', 'vinmes', 'vintes', 'connaitrre', 'probème']) {
         expect(isRectifiedSpelling(word, french), word).toBe(false);
       }
     });
@@ -114,6 +119,29 @@ describe('Calibration du moteur (étape A)', () => {
       expect(long.misspelling).toBe(300);
       expect(long.grammar).toBe(300);
       expect(long.long_sentence).toBe(30);
+    });
+  });
+
+  describe('clé phonétique (mots très déformés)', () => {
+    it('donne la même clé aux mots qui se prononcent pareil', () => {
+      for (const [written, word] of [
+        ['akeuil', 'accueil'],
+        ['sistème', 'système'],
+        ['comunikation', 'communication'],
+        ['conection', 'connexion'],
+        ['responssable', 'responsable'],
+        ['expérianse', 'expérience'],
+      ]) {
+        expect(phoneticKey(written ?? ''), written).toBe(phoneticKey(word ?? ''));
+      }
+      expect(phoneticKey('maison')).not.toBe(phoneticKey('maçon'));
+    });
+
+    it('propose les mots du dictionnaire de même prononciation', () => {
+      const { frequency } = getSpellingDictionaries();
+      if (!(frequency instanceof ZipfFrequency)) throw new Error('liste de fréquences absente');
+      expect(soundsLike('akeuil', frequency).map((c) => c.word)).toContain('accueil');
+      expect(soundsLike('dossié', frequency).map((c) => c.word)).toContain('dossier');
     });
   });
 });

@@ -21,8 +21,14 @@ export async function createTestApp(
 }
 
 /** Démarre le worker (consommateur BullMQ + moteur d'analyse) dans le processus de test. */
-export async function createTestWorker(): Promise<INestApplicationContext> {
-  const worker = await Test.createTestingModule({ imports: [WorkerModule] }).compile();
+export async function createTestWorker(
+  overrides: { token: unknown; value: unknown }[] = [],
+): Promise<INestApplicationContext> {
+  let builder = Test.createTestingModule({ imports: [WorkerModule] });
+  for (const { token, value } of overrides) {
+    builder = builder.overrideProvider(token).useValue(value);
+  }
+  const worker = await builder.compile();
   worker.useLogger(false);
   await worker.init();
   return worker;

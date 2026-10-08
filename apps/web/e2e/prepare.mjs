@@ -4,12 +4,10 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { Redis } from 'ioredis';
 import pg from 'pg';
+import { e2eDatabaseUrl } from './database-url.mjs';
 
 const MIGRATIONS = fileURLToPath(new URL('../../api/prisma/migrations/', import.meta.url));
-const url = new URL(
-  process.env.E2E_DATABASE_URL ??
-    'postgresql://wordfix:wordfix_dev_password@127.0.0.1:5432/wordfix_e2e?schema=public',
-);
+const url = new URL(e2eDatabaseUrl());
 const database = url.pathname.slice(1);
 if (!database.endsWith('_e2e')) throw new Error('La base E2E doit se terminer par « _e2e ».');
 url.searchParams.delete('schema');

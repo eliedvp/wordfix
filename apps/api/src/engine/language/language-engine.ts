@@ -1,5 +1,6 @@
 import type { BlockKind, IssueCategory } from '@wordfix/shared';
 import { confidenceRank } from '../postprocess/nature-policy.js';
+import { AccentConfusionAnalyzer } from './analyzers/accent-confusion.analyzer.js';
 import { GrammarAnalyzer } from './analyzers/grammar.analyzer.js';
 import { RepetitionAnalyzer } from './analyzers/repetition.analyzer.js';
 import { SentenceAnalyzer } from './analyzers/sentence.analyzer.js';
@@ -87,6 +88,7 @@ export function createLanguageEngine(config: LanguageEngineConfig = LANGUAGE_ENG
       new RepetitionAnalyzer(),
       new SpellingAnalyzer(),
       new GrammarAnalyzer(),
+      new AccentConfusionAnalyzer(),
       new TypographyAnalyzer(),
       new SentenceAnalyzer(),
     ],

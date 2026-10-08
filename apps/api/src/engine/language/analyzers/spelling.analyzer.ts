@@ -1,8 +1,10 @@
 import type { Block } from '@wordfix/shared';
 import { getSpellingDictionaries } from '../spelling/dictionaries.js';
 import { accentedVariant } from '../spelling/accents.js';
-import { NO_FREQUENCY, type WordFrequency } from '../spelling/frequency.js';
-import { assessConfidence, rankCandidates } from '../spelling/ranking.js';
+import { NO_FREQUENCY, type WordFrequency, ZipfFrequency } from '../spelling/frequency.js';
+import { soundsLike } from '../spelling/phonetic.js';
+import { assessConfidence, rankCandidates, type RankedCandidate } from '../spelling/ranking.js';
+import type { AmbiguityOption } from '../ambiguity/types.js';
 import { isRectifiedSpelling } from '../spelling/rectifications.js';
 import { defaultLexicon, isKnownWord, type SpellingLexicon } from '../spelling/word-lists.js';
 import { followsTitleOrInitial, isSentenceStart, overlapsAny } from '../text.js';
@@ -30,6 +32,7 @@ const TOKEN = /(?<![\p{L}\p{N}_])\p{L}+(?:['’-]\p{L}+)*(?![\p{L}\p{N}_])/gu;
 const ELISION = /^((?:jusqu|lorsqu|puisqu|quoiqu|presqu|qu|[cdjlmnst])['’])(.+)$/iu;
 
 const LOOKUPS_COUNTER = 'spelling:lookups';
+const DISTORTED_COUNTER = 'spelling:distorted';
 const lookupKey = (word: string) => `spelling:word:${word}`;
 
 export class SpellingAnalyzer implements LanguageAnalyzer {
@@ -102,9 +105,21 @@ export class SpellingAnalyzer implements LanguageAnalyzer {
       const english = lexicon.foreign.has(word);
       if (english && (midCapital || !accentedVariant(word, lexicon.general))) continue;
 
-      // Contrôle rapide : aucun mot du dictionnaire tout proche → pas de correction possible.
+      // Cas que l'IA pourra départager : jamais un nom propre possible, un mot anglais
+      // ou un mot répété (terme voulu), qui restent protégés.
+      const canAskAi = !capitalized && !english && !repeated;
+
+      // Contrôle rapide : aucun mot du dictionnaire tout proche → pas de correction
+      // sûre. Un mot très déformé (« comunikation ») peut seulement devenir un cas
+      // ambigu, sans aucune remarque tant que l'IA n'a pas choisi.
       const lower = word.toLowerCase();
-      if (!lexicon.general.hasCloseWord(lower)) continue;
+      if (!lexicon.general.hasCloseWord(lower)) {
+        if (canAskAi) {
+          const distorted = this.distortedCase(block, word, start, context, frequency);
+          if (distorted) out.push(distorted);
+        }
+        continue;
+      }
       if (!context.document.counters.has(lookupKey(lower))) {
         const used = context.document.counters.get(LOOKUPS_COUNTER) ?? 0;
         if (used >= lookupBudget) continue;
@@ -127,7 +142,41 @@ export class SpellingAnalyzer implements LanguageAnalyzer {
         useFrequency: !capitalized && frequency !== NO_FREQUENCY,
         requireAgreement: capitalized,
       });
-      if (verdict.confidence === 'low' || !verdict.best) continue;
+      if (verdict.confidence === 'low' || !verdict.best) {
+        // Plusieurs corrections plausibles, aucune ne se détache (« peris », « cadr ») :
+        // remarque « À vérifier » sans correction, que l'IA pourra préciser.
+        const options = optionsFrom(ranked, word, start, {
+          maxCost: context.config.ambiguity.maxOptionCost,
+          minZipf: context.config.ambiguity.minOptionZipf,
+          max: context.config.ambiguity.maxOptions,
+        });
+        if (canAskAi && options.length > 0) {
+          // Sans décision de l'IA, « À vérifier » seulement si une correction est à une
+          // faute légère (accent, lettre doublée, touche voisine) : un mot plus éloigné
+          // de tout mot connu est peut-être un terme du domaine (« cron »).
+          const nearest = Math.min(...ranked.map((candidate) => candidate.cost));
+          const fallback =
+            nearest <= context.config.ambiguity.verifyMaxCost
+              ? ('verify' as const)
+              : ('drop' as const);
+          out.push({
+            rule: 'misspelling',
+            category: 'spelling',
+            subtype: 'misspelling',
+            blockId: block.id,
+            original: word,
+            suggestion: null,
+            explanation: explainAmbiguous(word, options),
+            severity: 'minor',
+            confidence: 'low',
+            source: 'rules',
+            relatedBlockIds: [],
+            range: { start, end: start + word.length },
+            ambiguity: { kind: 'spelling', options, fallback },
+          });
+        }
+        continue;
+      }
       // Faute répétée : seulement une faute légère (accent, lettre doublée) d'un mot courant.
       if (
         repeated &&
@@ -144,6 +193,21 @@ export class SpellingAnalyzer implements LanguageAnalyzer {
       const suggestion = matchCase(verdict.best, word);
       const alternatives = verdict.alternatives.slice(0, 2).map((alt) => matchCase(alt, word));
 
+      // Suggestion avec d'autres formes aussi proches (« heureus » → heureux ? heureuse ?) :
+      // l'IA pourra choisir la bonne forme ; sans elle, la suggestion reste telle quelle.
+      const ambiguity =
+        canAskAi && confidence === 'medium' && alternatives.length > 0
+          ? {
+              kind: 'spelling' as const,
+              options: [suggestion, ...alternatives].map((replacement) => ({
+                start,
+                end: start + word.length,
+                replacement,
+              })),
+              fallback: 'keep' as const,
+            }
+          : undefined;
+
       out.push({
         rule: 'misspelling',
         category: 'spelling',
@@ -157,9 +221,70 @@ export class SpellingAnalyzer implements LanguageAnalyzer {
         source: 'rules',
         relatedBlockIds: [],
         range: { start, end: start + word.length },
+        ...(ambiguity ? { ambiguity } : {}),
       });
     }
     return out;
+  }
+
+  /**
+   * Mot très déformé : les mots du dictionnaire qui se prononcent pareil (clé
+   * phonétique, spelling/phonetic.ts), courants, proposés comme options. Sans
+   * décision de l'IA, aucune remarque (repli « drop ») : rien ne permet de trancher.
+   */
+  private distortedCase(
+    block: Block,
+    word: string,
+    start: number,
+    context: AnalyzerContext,
+    frequency: WordFrequency,
+  ): LanguageIssue | null {
+    const config = context.config.ambiguity;
+    const length = [...word].length;
+    if (length < config.distortedMinLength || length > config.distortedMaxLength) return null;
+    if (!(frequency instanceof ZipfFrequency)) return null;
+    const lower = word.toLowerCase();
+    const key = `${DISTORTED_COUNTER}:${lower}`;
+    if (!context.document.counters.has(key)) {
+      const budget = Math.max(
+        config.distortedLookups,
+        Math.ceil((config.distortedLookupsPerThousandWords * context.document.wordCount) / 1000),
+      );
+      const used = context.document.counters.get(DISTORTED_COUNTER) ?? 0;
+      if (used >= budget) return null;
+      context.document.counters.set(DISTORTED_COUNTER, used + 1);
+      context.document.counters.set(key, 1);
+    }
+    const candidates = soundsLike(lower, frequency)
+      .filter((candidate) => candidate.zipf >= config.distortedMinOptionZipf)
+      .map((candidate) => candidate.word);
+    const ranked = rankCandidates(
+      lower,
+      candidates,
+      frequency,
+      context.config.spelling.frequencyWeight,
+    );
+    const options = optionsFrom(ranked, word, start, {
+      maxCost: config.distortedMaxOptionCost,
+      minZipf: config.distortedMinOptionZipf,
+      max: config.maxOptions,
+    });
+    if (options.length === 0) return null;
+    return {
+      rule: 'misspelling',
+      category: 'spelling',
+      subtype: 'misspelling',
+      blockId: block.id,
+      original: word,
+      suggestion: null,
+      explanation: explainAmbiguous(word, options),
+      severity: 'minor',
+      confidence: 'low',
+      source: 'rules',
+      relatedBlockIds: [],
+      range: { start, end: start + word.length },
+      ambiguity: { kind: 'distorted', options, fallback: 'drop' },
+    };
   }
 
   /** Écarte ce qui ressemble à un sigle, un nom de produit ou un mot composé. */
@@ -172,6 +297,30 @@ export class SpellingAnalyzer implements LanguageAnalyzer {
     if (/.\p{Lu}/u.test(word)) return false; // majuscule interne : GitHub, MongoDB, RESTful
     return true;
   }
+}
+
+/** Corrections proposées pour un cas ambigu : proches, assez courantes, au plus `max`. */
+function optionsFrom(
+  ranked: readonly RankedCandidate[],
+  word: string,
+  start: number,
+  limits: { maxCost: number; minZipf: number; max: number },
+): AmbiguityOption[] {
+  return ranked
+    .filter(
+      (candidate) => candidate.cost <= limits.maxCost && (candidate.zipf ?? 0) >= limits.minZipf,
+    )
+    .slice(0, limits.max)
+    .map((candidate) => ({
+      start,
+      end: start + word.length,
+      replacement: matchCase(candidate.word, word),
+    }));
+}
+
+function explainAmbiguous(word: string, options: readonly AmbiguityOption[]): string {
+  const list = options.map((option) => `« ${option.replacement} »`).join(', ');
+  return `« ${word} » ne figure pas dans le dictionnaire. Plusieurs corrections sont possibles (${list}) : vérifiez le mot voulu.`;
 }
 
 /** Candidat recevable : un mot simple, en minuscules (jamais un nom propre), différent du mot. */

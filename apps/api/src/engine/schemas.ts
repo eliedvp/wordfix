@@ -124,3 +124,19 @@ export const verificationSchema = z.strictObject({
   explanation,
 });
 export type Verification = z.infer<typeof verificationSchema>;
+
+// --- Cas ambigus du moteur de langue ----------------------------------------
+
+export const ambiguityDecisionSchema = z.strictObject({
+  caseId: z.string().max(10),
+  decision: z.enum(['correct', 'keep', 'verify']),
+  /** Option choisie, recopiée à l'identique ; null pour « keep » et « verify ». */
+  correction: z.string().max(120).nullable(),
+  justification: z.string().max(200),
+  confidence,
+});
+
+export const ambiguityResolutionSchema = z.strictObject({
+  decisions: z.array(ambiguityDecisionSchema).max(60),
+});
+export type AmbiguityResolution = z.infer<typeof ambiguityResolutionSchema>;

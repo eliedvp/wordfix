@@ -1,4 +1,5 @@
 import { defineConfig, devices } from '@playwright/test';
+import { e2eDatabaseUrl } from './e2e/database-url.mjs';
 
 /**
  * Tests de bout en bout dans un vrai navigateur, sur le build de production :
@@ -10,10 +11,11 @@ const WEB_PORT = 3100;
 // Les réécritures /api/* de Next.js sont figées au moment du build (API_INTERNAL_URL,
 // par défaut http://127.0.0.1:4000) : l'API de test écoute donc sur ce port.
 const API_PORT = 4000;
-const DATABASE_URL =
-  process.env.E2E_DATABASE_URL ??
-  'postgresql://wordfix:wordfix_dev_password@127.0.0.1:5432/wordfix_e2e?schema=public';
+// E2E_DATABASE_URL, sinon POSTGRES_PORT, sinon 5432 (voir e2e/database-url.mjs).
+const DATABASE_URL = e2eDatabaseUrl();
 const REDIS_URL = process.env.E2E_REDIS_URL ?? 'redis://127.0.0.1:6379/14';
+/** Message du worker une fois prêt à consommer la file (apps/api/src/worker.ts). */
+export const WORKER_READY = /Worker WordFix démarré/;
 
 const backendEnv = {
   NODE_ENV: 'test',
@@ -56,13 +58,26 @@ export default defineConfig({
       },
     },
   ],
+  // API et worker : deux processus distincts, lancés et arrêtés par Playwright lui-même
+  // (arbre de processus tué en fin de run, y compris sous Windows). Aucune dépendance
+  // à `sh` : chaque commande est un simple `node …`, valable dans PowerShell, cmd et sh.
   webServer: [
     {
-      // API et worker démarrent ensemble ; ils sont arrêtés ensemble à la fin.
-      command: 'sh -c "node dist/worker.js & exec node dist/main.js"',
+      name: 'API',
+      command: 'node dist/main.js',
       cwd: '../api',
       url: `http://127.0.0.1:${API_PORT}/api/health`,
       env: backendEnv,
+      reuseExistingServer: false,
+      timeout: 60_000,
+    },
+    {
+      name: 'Worker',
+      command: 'node dist/worker.js',
+      cwd: '../api',
+      // Le worker n'écoute sur aucun port : il est prêt quand il l'annonce dans ses logs.
+      env: { ...backendEnv, LOG_LEVEL: 'info' },
+      wait: { stdout: WORKER_READY },
       reuseExistingServer: false,
       timeout: 60_000,
     },

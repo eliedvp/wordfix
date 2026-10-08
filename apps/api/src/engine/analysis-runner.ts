@@ -8,7 +8,15 @@ import {
   MAX_DOCUMENT_WORDS,
   PARSER_VERSION,
 } from '@wordfix/shared';
-import { AI_PROVIDER, AiError, type AiProvider, type TokenUsage } from '../ai/ai-provider.js';
+import {
+  AI_PROVIDER,
+  AiError,
+  type AiErrorKind,
+  type AiProvider,
+  type TokenUsage,
+} from '../ai/ai-provider.js';
+import { aiModels } from '../ai/models.js';
+import { guardAi } from './ai-guard.js';
 import { AiUsageService } from '../ai/usage.service.js';
 import { forEachConcurrent } from '../common/concurrency.js';
 import { AppError } from '../common/errors/app-error.js';
@@ -34,6 +42,14 @@ import {
 } from './prompts/prompts.v1.js';
 import { checkDocumentGrammar } from './language/grammar/check-document.js';
 import { getGrammalecte } from './language/grammar/grammalecte-client.js';
+import {
+  type AmbiguityCase,
+  collectAmbiguities,
+  fallbackIssues,
+  planBatches,
+} from './language/ambiguity/cases.js';
+import { resolveAmbiguities } from './language/ambiguity/resolve.js';
+import { LANGUAGE_ENGINE_CONFIG } from './language/config.js';
 import { loadSpellingDictionaries } from './language/spelling/dictionaries.js';
 import type { GrammarFindings } from './language/types.js';
 import { runRules } from './rules/rules.js';
@@ -50,8 +66,24 @@ import type { CandidateIssue } from './types.js';
 const LOCAL_MAX_ISSUES = 25;
 const LOCAL_MAX_STYLE = 8;
 const MAX_VERIFICATIONS = 10;
-/** Au-delà de cette part de morceaux en échec, l'analyse est considérée comme ratée. */
+/**
+ * Au-delà de cette part de morceaux en échec pour une cause interne (hors IA),
+ * l'analyse est considérée comme ratée.
+ */
 const MAX_FAILED_RATIO = 0.1;
+/**
+ * Codes d'échec d'un morceau dus à la seule couche IA (fournisseur indisponible,
+ * quota, configuration, réponse invalide). L'IA est un enrichissement facultatif :
+ * ces échecs ne font jamais échouer une analyse que le moteur déterministe a pu mener.
+ */
+const AI_FAILURE_CODES: ReadonlySet<string> = new Set<AiErrorKind>([
+  'unavailable',
+  'quota',
+  'config',
+  'invalid_output',
+  // « bad_request » n'en fait volontairement pas partie : une requête refusée signale
+  // un probable bug de WordFix, qui ne doit pas passer pour une simple panne de l'IA.
+]);
 /** Tentatives par morceau avant de le marquer en échec. */
 const CHUNK_ATTEMPTS = 2;
 
@@ -73,6 +105,8 @@ interface RunState {
   resolver: LocationResolver;
   modelFast: string;
   modelSmart: string;
+  /** Fournisseur IA de cette analyse, avec coupe-circuit (voir ai-guard.ts). */
+  ai: AiProvider;
 }
 
 interface LocalChunkPlan {
@@ -83,6 +117,14 @@ interface ContextChunkPlan {
   blocks: string[];
   sections: string[];
 }
+/** Lot de cas ambigus du moteur de langue (étape « verify », index ≥ 100). */
+interface AmbiguityChunkPlan {
+  kind: 'ambiguity';
+  cases: AmbiguityCase[];
+}
+/** Les lots de cas ambigus ne partagent pas les index des vérifications de contradictions. */
+const AMBIGUITY_CHUNK_INDEX = 100;
+
 interface VerifyChunkPlan {
   blockA: string;
   blockB: string;
@@ -112,8 +154,9 @@ export class AnalysisRunner {
     config: ConfigService<Env, true>,
   ) {
     this.concurrency = config.get('AI_CONCURRENCY', { infer: true });
-    this.modelFast = config.get('AI_MODEL_FAST', { infer: true });
-    this.modelSmart = config.get('AI_MODEL_SMART', { infer: true });
+    const models = aiModels(config);
+    this.modelFast = models.fast;
+    this.modelSmart = models.smart;
     this.grammarEnabled = config.get('GRAMMAR_ENGINE', { infer: true }) === 'grammalecte';
   }
 
@@ -140,6 +183,7 @@ export class AnalysisRunner {
         resolver: new LocationResolver(model),
         modelFast: this.modelFast,
         modelSmart: this.modelSmart,
+        ai: guardAi(this.ai, { analysisId, logger: this.logger }),
       };
       if (analysis.chunksTotal === 0) await this.plan(state, warnings);
       this.logger.log({ ...log, stage: 'extract', words: model.meta.wordCount }, 'Document prêt');
@@ -277,7 +321,9 @@ export class AnalysisRunner {
     // démarrage du worker : cet appel ne fait alors qu'attendre la même instance).
     await loadSpellingDictionaries();
     const grammar = await this.checkGrammar(state);
-    const ruleIssues = runRules(state.model, { grammar })
+    const ambiguity = await this.planAmbiguities(state, runRules(state.model, { grammar }));
+    chunks.push(...ambiguity.chunks);
+    const ruleIssues = ambiguity.direct
       .map((candidate) => materialize(candidate, state.resolver, state.analysisId))
       .flatMap((result) => (result.ok ? [result.data] : []));
 
@@ -292,6 +338,69 @@ export class AnalysisRunner {
         },
       }),
     ]);
+  }
+
+  /**
+   * Cas ambigus du moteur de langue (étape C) : seuls les cas que le moteur
+   * déterministe ne peut pas trancher sont confiés à l'IA, par lots, dans un
+   * budget strict par analyse. Les cas hors budget (ou si le plafond quotidien de
+   * jetons est atteint) gardent leur forme sans IA (« À vérifier » pour un mot
+   * inconnu, rien pour un mot qui existe). Les lots deviennent des morceaux de
+   * l'étape « verify » : reprenables, jamais payés deux fois.
+   */
+  private async planAmbiguities(
+    state: RunState,
+    candidates: CandidateIssue[],
+  ): Promise<{ direct: CandidateIssue[]; chunks: Prisma.AnalysisChunkCreateManyInput[] }> {
+    const config = LANGUAGE_ENGINE_CONFIG.ambiguity;
+    const { direct, cases } = collectAmbiguities(candidates, state.model, config);
+    const exhausted = cases.length > 0 && (await this.usage.isExhausted());
+    const { batches, overflow } = planBatches(
+      cases,
+      exhausted ? { maxBatches: 0, maxCasesPerBatch: 1 } : config.ai,
+    );
+    this.logger.log(
+      {
+        analysisId: state.analysisId,
+        ambiguousCases: cases.length,
+        sentToAi: cases.length - overflow.length,
+        batches: batches.length,
+        overBudget: overflow.length,
+        dailyBudgetExhausted: exhausted,
+      },
+      'Cas ambigus du moteur de langue',
+    );
+    return {
+      direct: [...direct, ...overflow.flatMap(fallbackIssues)],
+      chunks: batches.map((batch, index) => ({
+        id: newId('chk'),
+        analysisId: state.analysisId,
+        stage: 'verify' as const,
+        index: AMBIGUITY_CHUNK_INDEX + index,
+        blockIds: { kind: 'ambiguity', cases: batch } as unknown as Prisma.InputJsonValue,
+      })),
+    };
+  }
+
+  /** Lot de cas ambigus : décision de l'IA, ou repli de chaque cas si elle échoue. */
+  private async processAmbiguity(state: RunState, plan: AmbiguityChunkPlan) {
+    const config = LANGUAGE_ENGINE_CONFIG.ambiguity.ai;
+    const { issues, usage, stats } = await resolveAmbiguities(
+      state.ai,
+      state.modelFast,
+      plan.cases,
+      config.maxOutputTokens,
+    );
+    this.logger.log(
+      {
+        analysisId: state.analysisId,
+        ...stats,
+        tokensIn: usage.inputTokens,
+        tokensOut: usage.outputTokens,
+      },
+      stats.failed ? 'Cas ambigus : IA indisponible, repli sans IA' : 'Cas ambigus résolus',
+    );
+    return { issues, usage, result: stats };
   }
 
   /**
@@ -354,8 +463,9 @@ export class AnalysisRunner {
             return;
           } catch (error) {
             if (error instanceof AnalysisStopped) throw error;
+            // Une erreur IA, même définitive, ne concerne que ce morceau : il est
+            // marqué en échec et l'analyse continue (repli sans IA).
             const aiError = error instanceof AiError ? error : null;
-            if (aiError && !aiError.retryable) throw aiError;
             if (attempt < CHUNK_ATTEMPTS && aiError?.kind === 'invalid_output') continue;
             await this.prisma.analysisChunk.update({
               where: { id: chunk.id },
@@ -448,7 +558,7 @@ export class AnalysisRunner {
       if (block) parts.push(formatBlock(block, state.resolver.sectionPath(block)));
     }
 
-    const { data, usage } = await this.ai.generateStructured({
+    const { data, usage } = await state.ai.generateStructured({
       model: state.modelFast,
       instructions: LOCAL_INSTRUCTIONS,
       input: wrapDocument(parts.join('\n\n')),
@@ -487,7 +597,7 @@ export class AnalysisRunner {
       wrapDocument(body.join('\n\n')),
     ].join('\n\n');
 
-    const { data, usage } = await this.ai.generateStructured({
+    const { data, usage } = await state.ai.generateStructured({
       model: state.modelSmart,
       instructions: CONTEXT_INSTRUCTIONS,
       input,
@@ -542,7 +652,7 @@ export class AnalysisRunner {
       ].join('\n');
     });
 
-    const { data, usage } = await this.ai.generateStructured({
+    const { data, usage } = await state.ai.generateStructured({
       model: state.modelSmart,
       instructions: GLOBAL_INSTRUCTIONS,
       input: wrapDocument(
@@ -609,7 +719,10 @@ export class AnalysisRunner {
   // --- Étape 5 : vérification ciblée des contradictions ------------------------
 
   private async processVerify(state: RunState, chunk: AnalysisChunk) {
-    const plan = chunk.blockIds as unknown as VerifyChunkPlan;
+    const stored = chunk.blockIds as unknown as VerifyChunkPlan | AmbiguityChunkPlan;
+    if ('kind' in stored && stored.kind === 'ambiguity')
+      return this.processAmbiguity(state, stored);
+    const plan = stored as VerifyChunkPlan;
     const a = state.resolver.block(plan.blockA);
     const b = state.resolver.block(plan.blockB);
     const noUsage: TokenUsage = { inputTokens: 0, outputTokens: 0, cachedTokens: 0 };
@@ -622,7 +735,7 @@ export class AnalysisRunner {
       ),
     ].join('\n\n');
 
-    const { data, usage } = await this.ai.generateStructured({
+    const { data, usage } = await state.ai.generateStructured({
       model: state.modelFast,
       instructions: VERIFY_INSTRUCTIONS,
       input,
@@ -657,15 +770,26 @@ export class AnalysisRunner {
   private async finalize(state: RunState): Promise<void> {
     const chunks = await this.prisma.analysisChunk.findMany({
       where: { analysisId: state.analysisId },
-      select: { stage: true, status: true, errorCode: true },
+      select: { stage: true, status: true, errorCode: true, result: true },
     });
-    const core = chunks.filter((c) => c.stage === 'local' || c.stage === 'context');
     const failed = chunks.filter((c) => c.status !== 'DONE');
-    const coreFailed = core.filter((c) => c.status !== 'DONE');
+    // Échecs dus à la couche IA : non bloquants (résultats déterministes conservés).
+    const aiFailed = failed.filter((c) => AI_FAILURE_CODES.has(c.errorCode ?? ''));
+    // Lots de cas ambigus terminés en repli : IA indisponible, ou requête refusée.
+    const ambiguityFailures = chunks
+      .filter((c) => c.status === 'DONE')
+      .map((c) => (c.result as { failed?: unknown } | null)?.failed)
+      .filter((code): code is string => typeof code === 'string');
+    const ambiguityFallback = ambiguityFailures.some((code) => AI_FAILURE_CODES.has(code));
+    const ambiguityInternal = ambiguityFailures.some((code) => !AI_FAILURE_CODES.has(code));
+    // Échecs internes (hors IA, dont les requêtes refusées par le fournisseur, signe
+    // d'un bug WordFix) : ils peuvent toujours faire échouer l'analyse.
+    const otherFailed = failed.filter((c) => !AI_FAILURE_CODES.has(c.errorCode ?? ''));
+    const core = chunks.filter((c) => c.stage === 'local' || c.stage === 'context');
+    const coreOtherFailed = otherFailed.filter((c) => c.stage === 'local' || c.stage === 'context');
 
-    if (core.length > 0 && coreFailed.length / core.length > MAX_FAILED_RATIO) {
-      const availability = coreFailed.some((c) => c.errorCode === 'unavailable');
-      await this.markFailed(state.analysisId, availability ? 'AI_UNAVAILABLE' : 'ANALYSIS_FAILED');
+    if (core.length > 0 && coreOtherFailed.length / core.length > MAX_FAILED_RATIO) {
+      await this.markFailed(state.analysisId, 'ANALYSIS_FAILED');
       return;
     }
 
@@ -680,7 +804,8 @@ export class AnalysisRunner {
       select: { warnings: true },
     });
     const warnings = new Set((current?.warnings as AnalysisWarning[] | null) ?? []);
-    if (failed.length > 0) warnings.add('PARTIAL_ANALYSIS');
+    if (otherFailed.length > 0 || ambiguityInternal) warnings.add('PARTIAL_ANALYSIS');
+    if (aiFailed.length > 0 || ambiguityFallback) warnings.add('AI_CHECKS_SKIPPED');
     if (capped) warnings.add('ISSUES_CAPPED');
 
     const updated = await this.prisma.analysis.updateMany({
