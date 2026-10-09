@@ -12,6 +12,9 @@ import type { Block } from '@wordfix/shared';
  *    anglaises (« it’s », « don’t »), lettres accentuées ;
  * 2. à défaut (passage court, liste de mots-clés) : mots connus d'un seul des deux
  *    dictionnaires, si ceux-ci sont chargés.
+ * Les noms propres (mots en majuscule hors début de phrase : « Ethiopian Airlines »,
+ * « The Pogues ») et les sigles (« ET », « CNRS ») ne renseignent pas sur la langue
+ * de la phrase : ils ne comptent pas.
  * La décision se prend par phrase ; une phrase trop courte pour trancher prend la
  * langue de son paragraphe, puis celle du document (le français par défaut).
  */
@@ -71,6 +74,8 @@ const WORD = /\p{L}+(?:['’]\p{L}+)*/gu;
 const FRENCH_ELISION = /^(?:l|d|j|m|n|s|t|c|qu|jusqu|lorsqu|puisqu|quoiqu)['’]\p{L}/iu;
 const ENGLISH_CONTRACTION = /\p{L}['’](?:s|t|re|ve|ll|d|m)$/iu;
 const ACCENTED = /[àâäéèêëîïôöùûüÿçœæ]/iu;
+/** Texte qui précède un début de phrase : rien, ou une fin de phrase (guillemets compris). */
+const SENTENCE_START = /(?:^|[.!?…:]\s*)[\s«“"'(]*$/u;
 
 interface Evidence {
   fr: number;
@@ -83,6 +88,11 @@ function evidenceOf(text: string, config: LanguageDetectionConfig): Evidence {
   const evidence: Evidence = { fr: 0, en: 0, content: [] };
   for (const match of text.matchAll(WORD)) {
     const token = match[0];
+    // Sigle ou mot en capitales (« ET », « AITA ») : aucun indice.
+    if (token.length >= 2 && /^\p{Lu}+$/u.test(token)) continue;
+    // Majuscule ailleurs qu'en tête de phrase : élément d'un nom propre (« The
+    // Cranberries », « Le Monde »), pas un indice de langue.
+    if (/^\p{Lu}/u.test(token) && !SENTENCE_START.test(text.slice(0, match.index))) continue;
     const lower = token.toLowerCase();
     if (FRENCH_ELISION.test(lower)) {
       evidence.fr++;

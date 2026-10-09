@@ -99,5 +99,18 @@ describe('Détection de la langue (par phrase, locale et déterministe)', () => 
         'Elle a soutenu sa thèse à l’Université de Versailles Saint-Quentin-en-Yvelines avec le CNRS.',
       ).block,
     ).toBe('fr');
+    // Noms anglais en milieu de phrase et sigles : ni indices anglais ni mots-outils.
+    expect(
+      languageOf(
+        'On retiendra plus particulierement The Cranberries et The Corrs parmi les invités.',
+      ).block,
+    ).toBe('fr');
+    expect(
+      languageOf(
+        'La compagnie, officiellemnt Ethiopian Airlines (code AITA : ET), dessert la ville.',
+      ).block,
+    ).toBe('fr');
+    // En début de phrase, le mot reste un indice : l'anglais est toujours reconnu.
+    expect(languageOf('The results are presented in the following table.').block).toBe('en');
   });
 });

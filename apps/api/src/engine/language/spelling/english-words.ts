@@ -9,14 +9,23 @@ import type { WordList } from './word-lists.js';
  * Source : dictionnaire Hunspell anglais de `dictionary-en` (SCOWL, licence
  * MIT AND BSD). Les formes autorisées par le dictionnaire (base, préfixes,
  * suffixes) sont gardées dans un simple ensemble : pas de second moteur nspell.
- * `has` reconnaît en plus, par retrait des terminaisons usuelles, des formes
- * approchées (anglicismes) ; `hasExact` s'en tient aux formes du dictionnaire.
+ * `has` (anglicismes dans un texte français) garde le comportement historique :
+ * formes de base, plus les formes approchées par retrait des terminaisons usuelles.
+ * `hasExact` (passages en anglais) s'en tient aux formes développées du dictionnaire.
  */
 export class EnglishWordList implements WordList {
-  constructor(private readonly stems: ReadonlySet<string>) {}
+  /**
+   * @param stems formes de base du dictionnaire (anglicismes, comportement historique)
+   * @param forms toutes les formes autorisées (préfixes et suffixes développés), pour
+   *   les passages en anglais ; par défaut, les formes de base.
+   */
+  constructor(
+    private readonly stems: ReadonlySet<string>,
+    private readonly forms: ReadonlySet<string> = stems,
+  ) {}
 
   get size(): number {
-    return this.stems.size;
+    return this.forms.size;
   }
 
   has(word: string): boolean {
@@ -31,13 +40,13 @@ export class EnglishWordList implements WordList {
    * reconnaître un anglicisme, pas pour corriger une faute anglaise).
    */
   hasExact(word: string): boolean {
-    return this.stems.has(word.toLowerCase());
+    return this.forms.has(word.toLowerCase());
   }
 
   /** Forme du dictionnaire, ou graphie britannique d'une forme du dictionnaire. */
   hasExactOrBritish(word: string): boolean {
     const lower = word.toLowerCase();
-    return this.stems.has(lower) || americanVariants(lower).some((v) => this.stems.has(v));
+    return this.forms.has(lower) || americanVariants(lower).some((v) => this.forms.has(v));
   }
 }
 

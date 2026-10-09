@@ -156,6 +156,30 @@ describe('Langue des passages : orthographe et grammaire adaptées', () => {
     ]);
   });
 
+  it('7. noms propres anglais et sigles : la phrase reste française, ses fautes restent des Erreurs', async () => {
+    const issues = await analyze([
+      'La compagnie, officiellemnt Ethiopian Airlines (code AITA : ET), dessert Addis-Abeba.',
+      'On retiendra plus particulierement The Cranberries et The Corrs parmi les groupes invités.',
+    ]);
+    expect(spellingOf(issues)).toEqual([
+      ['officiellemnt', 'officiellement', 'error'],
+      ['particulierement', 'particulièrement', 'error'],
+    ]);
+  });
+
+  it('7 bis. mots sans accent proches de l’anglais dans une phrase française : Erreur maintenue', async () => {
+    const issues = await analyze([
+      'La resolution du problème a pris plusieurs semaines.',
+      'Ce phénomène recurrent inquiète les riverains.',
+      'La décoration interieure a été entièrement refaite.',
+    ]);
+    expect(spellingOf(issues)).toEqual([
+      ['resolution', 'résolution', 'error'],
+      ['recurrent', 'récurrent', 'error'],
+      ['interieure', 'intérieure', 'error'],
+    ]);
+  });
+
   it('confusion d’accents : jamais dans une phrase anglaise', async () => {
     const french = await analyze(['Les taches qui m’ont été confiées étaient variées.']);
     expect(french.map((i) => i.original)).toContain('taches');

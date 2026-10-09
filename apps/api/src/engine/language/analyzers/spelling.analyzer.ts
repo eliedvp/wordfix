@@ -123,7 +123,13 @@ export class SpellingAnalyzer implements LanguageAnalyzer {
       // sauf s'il s'agit d'un mot français dont on a oublié l'accent (« evolution »),
       // ce qui suppose une phrase sûrement française (« dissemination » est juste en
       // anglais). Un mot anglais en majuscule en milieu de phrase reste un nom.
-      const english = lexicon.foreign.has(word);
+      // Phrase sûrement française : liste historique (formes de base), pour relire un
+      // texte français exactement comme avant ; phrase incertaine : toutes les formes.
+      const english =
+        lexicon.foreign.has(word) ||
+        (language !== 'fr' &&
+          lexicon.foreign instanceof EnglishWordList &&
+          lexicon.foreign.hasExactOrBritish(word));
       if (english && (midCapital || language !== 'fr' || !accentedVariant(word, lexicon.general))) {
         continue;
       }
@@ -135,9 +141,9 @@ export class SpellingAnalyzer implements LanguageAnalyzer {
         continue;
       }
 
-      // Cas que l'IA pourra départager : jamais un nom propre possible, un mot anglais,
-      // un mot répété (terme voulu) ou une phrase de langue incertaine.
-      const canAskAi = !capitalized && !english && !repeated && language === 'fr';
+      // Cas que l'IA pourra départager : jamais un nom propre possible, un mot anglais
+      // ou un mot répété (terme voulu). (Les phrases anglaises sont traitées plus haut.)
+      const canAskAi = !capitalized && !english && !repeated;
 
       // Contrôle rapide : aucun mot du dictionnaire tout proche → pas de correction
       // sûre. Un mot très déformé (« comunikation ») peut seulement devenir un cas
@@ -230,10 +236,15 @@ export class SpellingAnalyzer implements LanguageAnalyzer {
 
       // Doute venu du contexte (nom propre possible, mot anglais, mot voulu) :
       // jamais plus qu'une suggestion.
-      // Langue incertaine, ou forme féminine en « -eure » sans féminin régulier connu
-      // (« vainqueure » peut être voulu) : pas de certitude non plus.
+      // Langue incertaine, ou forme féminine en « -eure » corrigée vers une autre
+      // terminaison (« vainqueure » → vainqueur peut changer le genre voulu) : pas de
+      // certitude non plus. « interieure » → intérieure reste une Erreur.
       const doubtful =
-        midCapital || english || repeated || language !== 'fr' || FEMININE_EURE.test(word);
+        midCapital ||
+        english ||
+        repeated ||
+        language !== 'fr' ||
+        (FEMININE_EURE.test(word) && !FEMININE_EURE.test(verdict.best));
       const confidence = doubtful && verdict.confidence === 'high' ? 'medium' : verdict.confidence;
       const suggestion = matchCase(verdict.best, word);
       const alternatives = verdict.alternatives.slice(0, 2).map((alt) => matchCase(alt, word));

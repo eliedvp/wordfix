@@ -171,7 +171,12 @@ export function loadSpellingDictionaries(): Promise<SpellingDictionaries> {
     const started = performance.now();
     stats.rssBeforeMb = megabytes(process.memoryUsage().rss);
     const spell = nspell({ aff: toBuffer(french.aff), dic: toBuffer(french.dic) });
-    const englishWords = new EnglishWordList(parseDicStems(english.dic, parseAffixes(english.aff)));
+    // Formes de base (anglicismes, comportement historique) et formes développées
+    // (passages en anglais) : un texte français est relu exactement comme avant.
+    const englishWords = new EnglishWordList(
+      parseDicStems(english.dic),
+      parseDicStems(english.dic, parseAffixes(english.aff)),
+    );
     const frequency = loadFrequencies();
     stats.loads++;
     stats.frequencyWords = frequency.size;
