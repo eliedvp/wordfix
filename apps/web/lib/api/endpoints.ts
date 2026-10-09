@@ -1,9 +1,9 @@
 import type {
   AnalysisDto,
   DocumentDto,
-  IssueDto,
   IssueListDto,
   IssueStatus,
+  UpdatedIssueDto,
 } from '@wordfix/shared';
 import { ApiError, apiFetch, jsonBody, NETWORK_MESSAGE, parseError } from './client';
 
@@ -19,7 +19,7 @@ export const api = {
   listIssues: (analysisId: string) =>
     apiFetch<IssueListDto>(`/analyses/${analysisId}/issues?status=all&limit=1000`),
   updateIssue: (id: string, status: IssueStatus, userText?: string) =>
-    apiFetch<IssueDto>(`/issues/${id}`, {
+    apiFetch<UpdatedIssueDto>(`/issues/${id}`, {
       method: 'PATCH',
       ...jsonBody(userText === undefined ? { status } : { status, userText }),
     }),

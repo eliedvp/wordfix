@@ -1,7 +1,8 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { IssueListDto, IssueStatus } from '@wordfix/shared';
+import type { AnalysisDto, IssueDto, IssueListDto, IssueStatus } from '@wordfix/shared';
+import { useRef } from 'react';
 import { api } from '@/lib/api/endpoints';
 
 export function useIssues(analysisId: string, enabled: boolean) {
@@ -13,13 +14,37 @@ export function useIssues(analysisId: string, enabled: boolean) {
   });
 }
 
+/** Remplace un problème de la liste en cache (les autres restent inchangés). */
+function replaceItem(
+  list: IssueListDto | undefined,
+  id: string,
+  change: (item: IssueDto) => IssueDto,
+): IssueListDto | undefined {
+  return list
+    ? { ...list, items: list.items.map((item) => (item.id === id ? change(item) : item)) }
+    : list;
+}
+
 /**
  * Décision sur un problème, affichée immédiatement (mise à jour optimiste) puis
- * confirmée par le serveur ; en cas d'échec réseau, l'affichage est rétabli.
+ * confirmée par le serveur :
+ * - la réponse du PATCH porte le problème enregistré et le compteur « points
+ *   traités » recompté par le serveur avec la décision : ils sont écrits dans les
+ *   caches, sans dépendre d'une seconde requête ;
+ * - si plusieurs décisions se suivent, seule la réponse de la plus récente est écrite
+ *   (une réponse plus ancienne, arrivée en retard, ne rétablit pas un ancien statut
+ *   et ne fait pas reculer le compteur) ;
+ * - en cas d'échec, seul ce problème retrouve son état précédent : les décisions
+ *   prises entre-temps sur d'autres problèmes sont conservées ;
+ * - dans tous les cas, l'analyse est ensuite relue sur le serveur (voir useAnalysis :
+ *   une relecture qui échoue est retentée).
  */
 export function useUpdateIssue(analysisId: string) {
   const client = useQueryClient();
-  const key = ['issues', analysisId];
+  const issuesKey = ['issues', analysisId];
+  const analysisKey = ['analysis', analysisId];
+  /** Numéro de la dernière décision envoyée pour cette analyse. */
+  const latest = useRef(0);
 
   return useMutation({
     mutationFn: ({
@@ -32,27 +57,44 @@ export function useUpdateIssue(analysisId: string) {
       userText?: string;
     }) => api.updateIssue(id, status, userText),
     onMutate: async ({ id, status, userText }) => {
-      await client.cancelQueries({ queryKey: key });
-      const previous = client.getQueryData<IssueListDto>(key);
-      client.setQueryData<IssueListDto>(key, (current) =>
-        current
-          ? {
-              ...current,
-              items: current.items.map((item) =>
-                item.id === id
-                  ? { ...item, status, userText: status === 'edited' ? (userText ?? null) : null }
-                  : item,
-              ),
-            }
+      await client.cancelQueries({ queryKey: issuesKey });
+      const previous = client
+        .getQueryData<IssueListDto>(issuesKey)
+        ?.items.find((item) => item.id === id);
+      client.setQueryData<IssueListDto>(issuesKey, (current) =>
+        replaceItem(current, id, (item) => ({
+          ...item,
+          status,
+          userText: status === 'edited' ? (userText ?? null) : null,
+        })),
+      );
+      return { previous, sequence: ++latest.current };
+    },
+    onSuccess: (updated, _vars, context) => {
+      // Une décision plus récente est en cours : c'est sa réponse qui fera foi (sinon une
+      // réponse en retard pourrait rétablir un ancien statut ou faire reculer le compteur).
+      if (context.sequence !== latest.current) return;
+      const { analysis, ...issue } = updated;
+      client.setQueryData<IssueListDto>(issuesKey, (current) =>
+        replaceItem(current, issue.id, () => issue),
+      );
+      client.setQueryData<AnalysisDto>(analysisKey, (current) =>
+        current && current.id === analysis.id
+          ? { ...current, reviewedCount: analysis.reviewedCount, issueCount: analysis.issueCount }
           : current,
       );
-      return { previous };
     },
-    onError: (_error, _vars, context) => {
-      if (context?.previous) client.setQueryData(key, context.previous);
+    onError: (_error, { id }, context) => {
+      const previous = context?.previous;
+      if (previous)
+        client.setQueryData<IssueListDto>(issuesKey, (current) =>
+          replaceItem(current, id, () => previous),
+        );
     },
     onSettled: () => {
-      void client.invalidateQueries({ queryKey: ['analysis', analysisId] });
+      void client.invalidateQueries({ queryKey: analysisKey });
+      // Résumé de l'historique (« x/y points traités ») : relu à sa prochaine ouverture.
+      void client.invalidateQueries({ queryKey: ['documents'] });
     },
   });
 }

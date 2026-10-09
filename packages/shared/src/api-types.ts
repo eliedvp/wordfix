@@ -155,6 +155,21 @@ export interface BlockContextDto {
   sectionPath: string;
 }
 
+/**
+ * Réponse à une décision sur un problème (PATCH /api/issues/:id) : le problème tel
+ * qu'enregistré, et l'avancement de la relecture de son analyse recalculé par le
+ * serveur dans la même transaction que la décision. Le compteur « points traités »
+ * ne dépend ainsi pas d'une seconde requête qui pourrait échouer.
+ */
+export interface UpdatedIssueDto extends IssueDto {
+  analysis: {
+    id: string;
+    /** Problèmes traités (statut différent de « open »), comme AnalysisDto.reviewedCount. */
+    reviewedCount: number;
+    issueCount: number;
+  };
+}
+
 export interface IssueListDto {
   items: IssueDto[];
   total: number;

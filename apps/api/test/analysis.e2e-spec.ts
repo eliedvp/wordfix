@@ -1,5 +1,11 @@
 import type { INestApplication, INestApplicationContext } from '@nestjs/common';
-import type { AnalysisDto, IssueDto, IssueListDto } from '@wordfix/shared';
+import type {
+  AnalysisDto,
+  IssueDto,
+  IssueListDto,
+  IssueStatus,
+  UpdatedIssueDto,
+} from '@wordfix/shared';
 import request from 'supertest';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { AI_PROVIDER, AiError } from '../src/ai/ai-provider.js';
@@ -150,6 +156,50 @@ describe('Analyse complète (API + file BullMQ + worker + moteur)', () => {
     const other = request.agent(app.getHttpServer());
     await other.get(`/api/analyses/${analysisId}`).expect(404);
     await other.patch(`/api/issues/${first!.id}`).send({ status: 'open' }).expect(404);
+  });
+
+  it('chaque décision renvoie le compteur « points traités » recompté, identique à la base', async () => {
+    const agent = request.agent(app.getHttpServer());
+    const { analysisId } = await uploadAndAnalyze(agent);
+    await waitFor(
+      () => getAnalysis(agent, analysisId),
+      (a) => a.status === 'COMPLETED',
+    );
+    const prisma = app.get(PrismaService);
+    const items = (
+      (await agent.get(`/api/analyses/${analysisId}/issues`).expect(200)).body as IssueListDto
+    ).items;
+    const [a, b] = items;
+    const total = items.length;
+
+    // Le statut renvoyé est celui enregistré, et le compteur celui de la base.
+    const steps: [string, IssueStatus, number][] = [
+      [a!.id, 'ignored', 1],
+      [b!.id, 'verified', 2],
+      [b!.id, 'ignored', 2], // changer de décision ne compte pas deux fois
+      [a!.id, 'open', 1], // rouvrir fait redescendre le compteur
+    ];
+    for (const [id, status, expected] of steps) {
+      const response = (await agent.patch(`/api/issues/${id}`).send({ status }).expect(200))
+        .body as UpdatedIssueDto;
+      const stored = await prisma.issue.findUniqueOrThrow({ where: { id } });
+      const inDatabase = await prisma.issue.count({
+        where: { analysisId, status: { not: 'open' } },
+      });
+      expect(stored.status).toBe(status);
+      expect(response).toMatchObject({
+        id,
+        status,
+        analysis: { id: analysisId, reviewedCount: expected, issueCount: total },
+      });
+      expect(inDatabase).toBe(expected);
+      // La vue d'ensemble de l'analyse donne le même compteur.
+      expect((await getAnalysis(agent, analysisId)).reviewedCount).toBe(expected);
+    }
+
+    // Les validations restent en place, et une décision refusée ne change rien.
+    await agent.patch(`/api/issues/${a!.id}`).send({ status: 'nimporte' }).expect(400);
+    expect((await getAnalysis(agent, analysisId)).reviewedCount).toBe(1);
   });
 
   it('refuse une deuxième analyse simultanée et permet d’annuler', async () => {

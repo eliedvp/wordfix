@@ -33,6 +33,15 @@ const STEP_SOURCES: Record<AnalysisStepKey, IssueSource[]> = {
   finalize: [],
 };
 
+/**
+ * Problèmes « traités » d'une analyse : tout statut autre que « open » (accepté,
+ * ignoré, vérifié, modifié). Seule définition du compteur « points traités », pour
+ * l'historique, l'écran d'analyse et la réponse à une décision.
+ */
+export function reviewedIssuesWhere(analysisId: string) {
+  return { analysisId, status: { not: 'open' as const } };
+}
+
 function errorCodeOf(value: string | null): ErrorCode | null {
   return isErrorCode(value) ? value : value ? 'ANALYSIS_FAILED' : null;
 }
@@ -44,7 +53,7 @@ export async function summarize(
 ): Promise<AnalysisSummaryDto> {
   const [issueCount, reviewedCount] = await Promise.all([
     prisma.issue.count({ where: { analysisId: analysis.id } }),
-    prisma.issue.count({ where: { analysisId: analysis.id, status: { not: 'open' } } }),
+    prisma.issue.count({ where: reviewedIssuesWhere(analysis.id) }),
   ]);
   return {
     id: analysis.id,
@@ -81,7 +90,7 @@ export async function toAnalysisDto(
         where: { analysisId: analysis.id },
         _count: { _all: true },
       }),
-      prisma.issue.count({ where: { analysisId: analysis.id, status: { not: 'open' } } }),
+      prisma.issue.count({ where: reviewedIssuesWhere(analysis.id) }),
       prisma.analysisChunk.groupBy({
         by: ['stage', 'status'],
         where: { analysisId: analysis.id },
