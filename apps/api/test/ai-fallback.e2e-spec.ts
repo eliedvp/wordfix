@@ -8,6 +8,7 @@ import { AI_PROVIDER, AiError, type AiProvider } from '../src/ai/ai-provider.js'
 import type { FakeAiProvider } from '../src/ai/providers/fake.provider.js';
 import { AI_CIRCUIT_BREAKER_THRESHOLD } from '../src/engine/ai-guard.js';
 import { GeminiAiProvider } from '../src/ai/providers/gemini.provider.js';
+import { RequestRateLimiter } from '../src/ai/rate-limiter.js';
 import { AnalysisRunner } from '../src/engine/analysis-runner.js';
 import { AnalysisProcessor } from '../src/processors/analysis.processor.js';
 import type { AnalysisJobData } from '../src/queue/queue.constants.js';
@@ -75,7 +76,11 @@ function geminiWith(fetchImpl: typeof fetch, timeoutMs = 5_000): GeminiAiProvide
     maxRetries: 0,
     thinkingLevel: ThinkingLevel.LOW,
     fetch: fetchImpl,
-    sleep: () => Promise.resolve(),
+    // Pas d'espacement, attentes instantanées : le test porte sur le repli, pas sur le débit.
+    rateLimiter: new RequestRateLimiter({
+      requestsPerMinute: null,
+      sleep: () => Promise.resolve(),
+    }),
   });
 }
 
@@ -182,6 +187,11 @@ describe('IA indisponible : l’analyse se termine avec le moteur déterministe'
     expect(run.analysis.errorCode).toBeNull();
     expect(run.analysis.score).not.toBeNull();
     expect(run.analysis.warnings).toContain('AI_CHECKS_SKIPPED');
+    // Les vérifications non effectuées sont détaillées : relecture locale comprise, et
+    // jamais plus d'éléments sautés que prévus.
+    const skipped = run.analysis.skippedAiChecks;
+    expect(skipped.map((c) => c.check)).toContain('local');
+    expect(skipped.every((c) => c.skipped > 0 && c.skipped <= c.total)).toBe(true);
     expect(run.analysis.warnings).not.toContain('PARTIAL_ANALYSIS');
     // Aucune remarque d'IA, toutes les remarques déterministes conservées.
     expect(run.issues.items.every((i) => i.source === 'rules')).toBe(true);
@@ -219,6 +229,7 @@ describe('IA indisponible : l’analyse se termine avec le moteur déterministe'
     expect(callsWhenAvailable).toBeGreaterThan(MAX_CALLS_WITH_BREAKER);
     expect(run.analysis.status).toBe('COMPLETED');
     expect(run.analysis.warnings).not.toContain('AI_CHECKS_SKIPPED');
+    expect(run.analysis.skippedAiChecks).toEqual([]);
     expect(run.issues.items.some((i) => i.source === 'local')).toBe(true);
     expect(deterministic(run.issues).length).toBeGreaterThan(0);
     // Cas ambigu tranché par l'IA : Suggestion, jamais Erreur.

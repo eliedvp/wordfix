@@ -50,6 +50,20 @@ export type AiErrorKind =
    */
   | 'bad_request';
 
+/**
+ * Codes d'échec dus à la seule couche IA (fournisseur indisponible, limite de débit,
+ * quota, configuration, réponse invalide). L'IA est un enrichissement facultatif : ces
+ * échecs ne font jamais échouer une analyse que le moteur déterministe a pu mener.
+ * « bad_request » n'en fait volontairement pas partie : une requête refusée signale un
+ * probable bug de WordFix, qui ne doit pas passer pour une simple panne de l'IA.
+ */
+export const AI_FAILURE_CODES: ReadonlySet<string> = new Set<AiErrorKind>([
+  'unavailable',
+  'quota',
+  'config',
+  'invalid_output',
+]);
+
 export class AiError extends Error {
   constructor(
     readonly kind: AiErrorKind,

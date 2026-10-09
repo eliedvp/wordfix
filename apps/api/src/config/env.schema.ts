@@ -54,6 +54,11 @@ export const envSchema = z
     AI_MODEL_SMART: z.string().min(1).default('gpt-5.4'),
     GEMINI_MODEL_FAST: z.string().min(1).default('gemini-3.8-flash'),
     GEMINI_MODEL_SMART: z.string().min(1).default('gemini-3.8-flash'),
+    /**
+     * Requêtes Gemini par minute au plus, pour tout le worker (toutes analyses et tous
+     * morceaux confondus). 5 : offre gratuite de gemini-3.8-flash.
+     */
+    GEMINI_REQUESTS_PER_MINUTE: z.coerce.number().int().min(1).max(10_000).default(5),
     AI_REASONING_EFFORT: z.enum(['none', 'minimal', 'low', 'medium', 'high']).default('low'),
     AI_TIMEOUT_MS: z.coerce.number().int().min(5_000).default(120_000),
     AI_MAX_RETRIES: z.coerce.number().int().min(0).max(6).default(3),

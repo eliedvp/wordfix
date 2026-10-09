@@ -1,10 +1,11 @@
-import { Global, Module } from '@nestjs/common';
+import { Global, Logger, Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { Env } from '../config/env.schema.js';
 import { AI_PROVIDER, type AiProvider } from './ai-provider.js';
 import { FakeAiProvider } from './providers/fake.provider.js';
 import { GeminiAiProvider, geminiThinkingLevel } from './providers/gemini.provider.js';
 import { OpenAiProvider } from './providers/openai.provider.js';
+import { RequestRateLimiter } from './rate-limiter.js';
 import { AiUsageService } from './usage.service.js';
 
 @Global()
@@ -29,6 +30,11 @@ import { AiUsageService } from './usage.service.js';
             timeoutMs: config.get('AI_TIMEOUT_MS', { infer: true }),
             maxRetries: config.get('AI_MAX_RETRIES', { infer: true }),
             thinkingLevel: geminiThinkingLevel(config.get('AI_REASONING_EFFORT', { infer: true })),
+            // Un seul limiteur par processus : le fournisseur est un singleton du worker.
+            rateLimiter: new RequestRateLimiter({
+              requestsPerMinute: config.get('GEMINI_REQUESTS_PER_MINUTE', { infer: true }),
+            }),
+            logger: new Logger(GeminiAiProvider.name),
           });
         }
         const apiKey = config.get('OPENAI_API_KEY', { infer: true });

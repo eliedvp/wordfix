@@ -9,9 +9,9 @@ import {
   PARSER_VERSION,
 } from '@wordfix/shared';
 import {
+  AI_FAILURE_CODES,
   AI_PROVIDER,
   AiError,
-  type AiErrorKind,
   type AiProvider,
   type TokenUsage,
 } from '../ai/ai-provider.js';
@@ -53,6 +53,7 @@ import { LANGUAGE_ENGINE_CONFIG } from './language/config.js';
 import { loadSpellingDictionaries } from './language/spelling/dictionaries.js';
 import type { GrammarFindings } from './language/types.js';
 import { runRules } from './rules/rules.js';
+import { AMBIGUITY_CHUNK_INDEX } from './skipped-ai-checks.js';
 import {
   contextReviewSchema,
   globalReviewSchema,
@@ -71,19 +72,6 @@ const MAX_VERIFICATIONS = 10;
  * l'analyse est considérée comme ratée.
  */
 const MAX_FAILED_RATIO = 0.1;
-/**
- * Codes d'échec d'un morceau dus à la seule couche IA (fournisseur indisponible,
- * quota, configuration, réponse invalide). L'IA est un enrichissement facultatif :
- * ces échecs ne font jamais échouer une analyse que le moteur déterministe a pu mener.
- */
-const AI_FAILURE_CODES: ReadonlySet<string> = new Set<AiErrorKind>([
-  'unavailable',
-  'quota',
-  'config',
-  'invalid_output',
-  // « bad_request » n'en fait volontairement pas partie : une requête refusée signale
-  // un probable bug de WordFix, qui ne doit pas passer pour une simple panne de l'IA.
-]);
 /** Tentatives par morceau avant de le marquer en échec. */
 const CHUNK_ATTEMPTS = 2;
 
@@ -122,8 +110,6 @@ interface AmbiguityChunkPlan {
   kind: 'ambiguity';
   cases: AmbiguityCase[];
 }
-/** Les lots de cas ambigus ne partagent pas les index des vérifications de contradictions. */
-const AMBIGUITY_CHUNK_INDEX = 100;
 
 interface VerifyChunkPlan {
   blockA: string;

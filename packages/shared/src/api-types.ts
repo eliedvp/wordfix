@@ -54,6 +54,25 @@ export type AnalysisWarning =
   | 'ISSUES_CAPPED';
 
 export type AnalysisStepKey = 'extract' | 'local' | 'context' | 'global' | 'finalize';
+
+/** Vérifications confiées à l'IA, détaillées quand certaines n'ont pas pu être faites. */
+export type AiCheckKey =
+  /** Relecture paragraphe par paragraphe (orthographe, grammaire, style). */
+  | 'local'
+  /** Cohérence de chaque section. */
+  | 'context'
+  /** Cohérence du document entier, contradictions comprises. */
+  | 'global'
+  /** Cas ambigus du moteur de langue (mots que les règles ne peuvent pas départager). */
+  | 'ambiguity';
+
+export interface SkippedAiCheckDto {
+  check: AiCheckKey;
+  /** Éléments non vérifiés par l'IA (passages, sections, vérifications ou cas ambigus)… */
+  skipped: number;
+  /** …sur le nombre prévu. */
+  total: number;
+}
 export type AnalysisStepState = 'pending' | 'running' | 'done' | 'failed' | 'skipped';
 
 export interface AnalysisStepDto {
@@ -81,6 +100,11 @@ export interface AnalysisDto {
   score: number | null;
   scoreDetail: ScoreDetail | null;
   warnings: AnalysisWarning[];
+  /**
+   * Vérifications IA non effectuées (fournisseur indisponible, limite de débit, quota…),
+   * seulement celles qui en ont au moins une. Vide si toute l'analyse IA a abouti.
+   */
+  skippedAiChecks: SkippedAiCheckDto[];
   errorCode: ErrorCode | null;
   wordCount: number;
   estimatedPages: number;

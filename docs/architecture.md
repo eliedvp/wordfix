@@ -36,6 +36,11 @@ L'API et le worker partagent le même code (`infrastructureImports` dans `app.mo
 ## Moteur et IA
 
 - `ai/ai-provider.ts` : interface unique ; `OpenAiProvider` (Responses API, sortie JSON stricte, `store: false`) ; `GeminiAiProvider` (SDK officiel `@google/genai`, `generateContent` sans état, sortie JSON contrainte par `responseJsonSchema`, `AI_PROVIDER=gemini`, modèles `GEMINI_MODEL_*`) pour les essais ; `FakeAiProvider` réservé aux tests. Les règles de l'étape C (option parmi les candidats, jamais d'Erreur) sont dans le moteur, communes à tous les fournisseurs.
+- **Débit et pannes de l'IA** :
+  - `ai/rate-limiter.ts` : limiteur partagé par tous les appels Gemini du worker (toutes analyses et tous morceaux confondus). Les requêtes partent au plus `GEMINI_REQUESTS_PER_MINUTE` fois par minute (5 par défaut, offre gratuite de `gemini-3.8-flash`), espacées régulièrement et dans l'ordre des demandes. Portée : un processus ; plusieurs workers sur la même clé doivent se répartir le quota.
+  - 429 par minute : le délai indiqué par Google (`retryDelay`) devient une **pause commune**, et plus aucune requête ne part avant sa fin. Sans délai indiqué, l'attente croît (2 s, 4 s, 8 s…, 60 s au plus). Au plus `AI_MAX_RETRIES` nouveaux essais, et au-delà de 90 s d'attente demandée, l'appel abandonne (`unavailable`). Le quota quotidien épuisé donne `quota`, sans nouvel essai ni pause.
+  - `engine/ai-guard.ts` : coupe-circuit par analyse, inchangé. Il coupe aussitôt sur `quota` ou `config`, et après 3 échecs temporaires consécutifs.
+  - IA indisponible : l'analyse se termine avec le moteur déterministe (avertissement `AI_CHECKS_SKIPPED`). `skippedAiChecks` (`engine/skipped-ai-checks.ts`) détaille ce qui n'a pas été vérifié : passages de la relecture locale, groupes de sections, vérifications globales, cas ambigus.
 - `engine/language/` : WordFix Language Engine, analyse linguistique déterministe et locale (répétitions, typographie, phrases longues) ; voir [`language-engine.md`](language-engine.md). `engine/rules/rules.ts` l'appelle et garde les règles portant sur le document entier (numérotation, sommaire, sigles, graphies).
 - `engine/schemas.ts` : schémas zod des réponses, convertis en JSON Schema strict (`ai/strict-json-schema.ts`).
 - `engine/prompts/prompts.v1.ts` : consignes versionnées (`PROMPT_VERSION` enregistrée sur chaque analyse).

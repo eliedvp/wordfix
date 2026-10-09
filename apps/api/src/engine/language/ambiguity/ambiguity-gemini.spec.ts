@@ -3,6 +3,7 @@ import type { DocumentModel } from '@wordfix/shared';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { buildDocx, type FixtureNode } from '../../../../test/fixtures/builders.js';
 import { GeminiAiProvider } from '../../../ai/providers/gemini.provider.js';
+import { RequestRateLimiter } from '../../../ai/rate-limiter.js';
 import { parseDocx } from '../../../docx/parser/docx-parser.js';
 import { LocationResolver } from '../../postprocess/location.js';
 import { materialize } from '../../postprocess/materialize.js';
@@ -57,7 +58,10 @@ function geminiAnswering(answer: Response | ((input: string) => Decision[])) {
     maxRetries: 0,
     thinkingLevel: ThinkingLevel.LOW,
     fetch: fetchImpl,
-    sleep: () => Promise.resolve(),
+    rateLimiter: new RequestRateLimiter({
+      requestsPerMinute: null,
+      sleep: () => Promise.resolve(),
+    }),
   });
   return { ai, sent };
 }
