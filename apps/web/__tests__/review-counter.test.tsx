@@ -55,6 +55,8 @@ interface Server {
   /** PATCH retenus (pour réordonner les réponses) ou refusés, par identifiant. */
   hold: Map<string, Promise<void>>;
   failPatch: Set<string>;
+  /** PATCH réussi mais sans compteur dans la réponse (API d'une version antérieure). */
+  withoutProgress: boolean;
 }
 const server: Server = vi.hoisted(() => ({
   issues: [],
@@ -62,6 +64,16 @@ const server: Server = vi.hoisted(() => ({
   analysisCalls: 0,
   hold: new Map(),
   failPatch: new Set(),
+  withoutProgress: false,
+}));
+
+// Messages affichés à l'utilisateur (un succès ne doit jamais produire d'erreur).
+const toasts = vi.hoisted(() => ({ errors: [] as string[] }));
+vi.mock('sonner', () => ({
+  toast: Object.assign(() => undefined, {
+    success: () => undefined,
+    error: (message: string) => toasts.errors.push(message),
+  }),
 }));
 
 const reviewed = () => server.issues.filter((issue) => issue.status !== 'open').length;
@@ -125,6 +137,10 @@ vi.mock('@/lib/api/endpoints', () => ({
         throw new ApiError('NETWORK_ERROR', 'Connexion impossible.', 0);
       }
       issue.status = status;
+      if (server.withoutProgress) {
+        await server.hold.get(id);
+        return { ...issue } as UpdatedIssueDto;
+      }
       const response: UpdatedIssueDto = {
         ...issue,
         analysis: { id: 'ana_1', reviewedCount: reviewed(), issueCount: server.issues.length },
@@ -201,6 +217,8 @@ beforeEach(() => {
   server.analysisCalls = 0;
   server.hold = new Map();
   server.failPatch = new Set();
+  server.withoutProgress = false;
+  toasts.errors = [];
   // Écran large : le détail du point est affiché à côté de la liste.
   window.matchMedia = ((query: string) => ({
     matches: true,
@@ -286,10 +304,35 @@ describe('Compteur « points traités » après une décision', () => {
     await act(async () => releaseFailure());
 
     await waitFor(() => expect(counter()).toHaveTextContent('1 / 4 points traités'));
+    // Un vrai échec reste signalé.
+    expect(toasts.errors).toEqual([
+      'Votre choix n’a pas pu être enregistré. Vérifiez votre connexion et réessayez.',
+    ]);
     await userEvent.click(screen.getByRole('button', { name: 'Traités' }));
     expect(treatedInList()).toEqual([expect.stringContaining('extrait iss_b')]);
     expect(server.issues.map((i) => i.status)).toEqual(['open', 'ignored', 'open', 'open']);
   });
+
+  it('réponse du PATCH sans compteur (API antérieure) : décision conservée, aucun faux message d’échec', async () => {
+    renderScreen();
+    await screen.findByText('0 / 4 points traités');
+    server.withoutProgress = true;
+    server.analysisDown = true; // la relecture est d'abord refusée, comme dans le test E2E
+
+    await decide('Ignorer');
+    await waitFor(() => expect(server.analysisCalls).toBeGreaterThan(1));
+    // Enregistré sur le serveur, affiché comme traité, sans message d'échec.
+    expect(server.issues[0]!.status).toBe('ignored');
+    expect(toasts.errors).toEqual([]);
+    await userEvent.click(screen.getByRole('button', { name: 'Traités' }));
+    expect(treatedInList()).toEqual([expect.stringContaining('extrait iss_a')]);
+    // Sans compteur dans la réponse, il attend la relecture… puis la rattrape.
+    expect(counter()).toHaveTextContent('0 / 4 points traités');
+    server.analysisDown = false;
+    await waitFor(() => expect(counter()).toHaveTextContent('1 / 4 points traités'), {
+      timeout: 8000,
+    });
+  }, 15_000);
 
   it('changement de filtre : le compteur reste global (traités / total), la liste suit le filtre', async () => {
     renderScreen();
