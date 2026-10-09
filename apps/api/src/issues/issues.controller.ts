@@ -1,6 +1,7 @@
 import { Body, Controller, Param, Patch, Req } from '@nestjs/common';
-import type { IssueDto } from '@wordfix/shared';
+import type { UpdatedIssueDto } from '@wordfix/shared';
 import type { Request } from 'express';
+import { reviewedIssuesWhere } from '../analyses/analysis-mapper.js';
 import { toIssueDto } from '../analyses/analyses.service.js';
 import { AppError } from '../common/errors/app-error.js';
 import { ParseIdPipe } from '../common/pipes/parse-id.pipe.js';
@@ -11,6 +12,8 @@ import { UpdateIssueDto } from './dto/update-issue.dto.js';
 /**
  * Décision de l'utilisateur sur un problème : accepter, ignorer, vérifier,
  * modifier ou rouvrir. Le fichier Word n'est pas modifié (décision D9).
+ * La réponse porte aussi l'avancement de la relecture, recompté dans la même
+ * transaction que la décision : il reflète toujours cette décision.
  */
 @Controller('issues')
 export class IssuesController {
@@ -24,7 +27,7 @@ export class IssuesController {
     @Param('id', new ParseIdPipe('iss')) id: string,
     @Body() body: UpdateIssueDto,
     @Req() req: Request,
-  ): Promise<IssueDto> {
+  ): Promise<UpdatedIssueDto> {
     const user = await this.session.currentUser(req);
     if (!user) throw new AppError('NOT_FOUND');
 
@@ -38,10 +41,17 @@ export class IssuesController {
     if (body.status === 'accepted' && issue.suggestion === null)
       throw new AppError('VALIDATION_FAILED');
 
-    const updated = await this.prisma.issue.update({
-      where: { id },
-      data: { status: body.status, userText: body.status === 'edited' ? userText : null },
-    });
-    return toIssueDto(updated);
+    const [updated, reviewedCount, issueCount] = await this.prisma.$transaction([
+      this.prisma.issue.update({
+        where: { id },
+        data: { status: body.status, userText: body.status === 'edited' ? userText : null },
+      }),
+      this.prisma.issue.count({ where: reviewedIssuesWhere(issue.analysisId) }),
+      this.prisma.issue.count({ where: { analysisId: issue.analysisId } }),
+    ]);
+    return {
+      ...toIssueDto(updated),
+      analysis: { id: issue.analysisId, reviewedCount, issueCount },
+    };
   }
 }

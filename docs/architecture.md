@@ -23,7 +23,10 @@ L'API et le worker partagent le même code (`infrastructureImports` dans `app.mo
    - **finalisation** : déduplication, plafond, score.
      Chaque morceau est enregistré dès qu'il est traité (`AnalysisChunk`) : une reprise ne refait que ce qui manque.
 4. Le site interroge `GET /api/analyses/:id` toutes les 2 s, puis charge `GET /api/analyses/:id/issues` (problèmes + texte des paragraphes concernés).
-5. Chaque décision part en `PATCH /api/issues/:id`.
+5. Chaque décision part en `PATCH /api/issues/:id`. La réponse contient le problème enregistré et le compteur « points traités » de l'analyse (statut différent de `open`), recompté dans la même transaction que la décision. Le site écrit ce compteur directement dans son cache, sans dépendre d'une seconde requête :
+   - une réponse ancienne arrivée en retard est ignorée ;
+   - en cas d'échec, seul le point concerné est rétabli ;
+   - l'analyse est ensuite relue, et une relecture refusée (limite de débit, coupure) est retentée toutes les 5 s jusqu'à réussir.
 
 ## Modèle de données (Prisma)
 
