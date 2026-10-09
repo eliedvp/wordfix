@@ -20,7 +20,11 @@ export class GrammarAnalyzer implements LanguageAnalyzer {
   }
 
   analyze(block: Block, context: AnalyzerContext): LanguageIssue[] {
-    const errors = context.document.grammar?.get(block.id);
+    // Grammalecte relit tout le texte ; ses règles françaises n'ont pas de sens sur
+    // une phrase en anglais (« examines » → « examine ») : ces erreurs sont ignorées.
+    const errors = context.document.grammar
+      ?.get(block.id)
+      ?.filter((error) => context.language.at(error.start) !== 'en');
     if (!errors || errors.length === 0) return [];
     return mapGrammarErrors(block, errors, context);
   }

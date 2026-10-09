@@ -1,6 +1,8 @@
 import type { Block } from '@wordfix/shared';
 import { getSpellingDictionaries } from '../spelling/dictionaries.js';
 import { accentedVariant } from '../spelling/accents.js';
+import { EnglishWordList, englishCorrections } from '../spelling/english-words.js';
+import { FEMININE_EURE, feminineVariant } from '../spelling/feminine.js';
 import { NO_FREQUENCY, type WordFrequency, ZipfFrequency } from '../spelling/frequency.js';
 import { soundsLike } from '../spelling/phonetic.js';
 import { assessConfidence, rankCandidates, type RankedCandidate } from '../spelling/ranking.js';
@@ -23,7 +25,13 @@ import type { AnalyzerContext, LanguageAnalyzer, LanguageIssue } from '../types.
  * Une correction n'est présentée comme certaine (Erreur) que si elle est proche
  * (une modification élémentaire), vers un mot courant, d'accord avec nspell, et
  * qu'aucun doute ne vient du contexte : majuscule en milieu de phrase, mot qui
- * existe en anglais, mot répété dans le document. Sinon : Suggestion au mieux.
+ * existe en anglais, mot répété dans le document, langue incertaine. Sinon :
+ * Suggestion au mieux.
+ *
+ * Langue (detection.ts) : dans une phrase en anglais, le dictionnaire français ne
+ * s'applique pas ; seule une faute anglaise évidente (une seule correction à une
+ * lettre près) est proposée, en Suggestion. Dans une phrase de langue incertaine,
+ * un mot anglais connu n'est jamais signalé.
  */
 
 /** Un mot : lettres, avec apostrophes ou traits d'union internes. */
@@ -32,6 +40,7 @@ const TOKEN = /(?<![\p{L}\p{N}_])\p{L}+(?:['’-]\p{L}+)*(?![\p{L}\p{N}_])/gu;
 const ELISION = /^((?:jusqu|lorsqu|puisqu|quoiqu|presqu|qu|[cdjlmnst])['’])(.+)$/iu;
 
 const LOOKUPS_COUNTER = 'spelling:lookups';
+const ENGLISH_COUNTER = 'spelling:english';
 const DISTORTED_COUNTER = 'spelling:distorted';
 const lookupKey = (word: string) => `spelling:word:${word}`;
 
@@ -97,16 +106,43 @@ export class SpellingAnalyzer implements LanguageAnalyzer {
         (context.document.wordCounts.get(word.toLowerCase()) ?? 0) >=
         config.repeatedUnknownThreshold;
       if (repeated && capitalized) continue;
+      const language = context.language.at(start);
+      // Phrase en anglais : pas d'orthographe française.
+      if (language === 'en') {
+        const issue = this.englishIssue(block, word, start, context, lexicon, {
+          capitalized,
+          repeated,
+          budget: lookupBudget,
+        });
+        if (issue) out.push(issue);
+        continue;
+      }
       // Majuscule en milieu de phrase : peut-être un nom propre (« Tourville »).
       const midCapital = capitalized && !isSentenceStart(block, start);
       // Anglicisme (« team », « online », « install ») : pas une faute de français,
-      // sauf s'il s'agit d'un mot français dont on a oublié l'accent (« evolution »).
-      // Un mot anglais en majuscule en milieu de phrase reste un nom (« Eden Park »).
-      const english = lexicon.foreign.has(word);
-      if (english && (midCapital || !accentedVariant(word, lexicon.general))) continue;
+      // sauf s'il s'agit d'un mot français dont on a oublié l'accent (« evolution »),
+      // ce qui suppose une phrase sûrement française (« dissemination » est juste en
+      // anglais). Un mot anglais en majuscule en milieu de phrase reste un nom.
+      // Phrase sûrement française : liste historique (formes de base), pour relire un
+      // texte français exactement comme avant ; phrase incertaine : toutes les formes.
+      const english =
+        lexicon.foreign.has(word) ||
+        (language !== 'fr' &&
+          lexicon.foreign instanceof EnglishWordList &&
+          lexicon.foreign.hasExactOrBritish(word));
+      if (english && (midCapital || language !== 'fr' || !accentedVariant(word, lexicon.general))) {
+        continue;
+      }
+      // Féminin en « -eure » (chercheure) : jamais corrigé vers le masculin ; le
+      // féminin régulier (chercheuse) est proposé s'il existe.
+      const feminine = feminineVariant(word, known);
+      if (feminine.kind === 'variant') {
+        out.push(feminineIssue(block, word, start, matchCase(feminine.recommended, word)));
+        continue;
+      }
 
       // Cas que l'IA pourra départager : jamais un nom propre possible, un mot anglais
-      // ou un mot répété (terme voulu), qui restent protégés.
+      // ou un mot répété (terme voulu). (Les phrases anglaises sont traitées plus haut.)
       const canAskAi = !capitalized && !english && !repeated;
 
       // Contrôle rapide : aucun mot du dictionnaire tout proche → pas de correction
@@ -177,6 +213,18 @@ export class SpellingAnalyzer implements LanguageAnalyzer {
         }
         continue;
       }
+      // Majuscule en milieu de phrase : nom propre probable (« Gagnoa » → gagna,
+      // « Assinie » → assainie), sauf faute légère (accent, lettre doublée :
+      // « Superieur » → « Supérieur ») ou correction vers un mot très courant
+      // (« Informatiue » → « Informatique »).
+      if (
+        midCapital &&
+        (verdict.cost ?? Infinity) > config.repeatedMaxCost &&
+        // (Mot en majuscule : classé sans fréquence ; on lit celle de la correction.)
+        (frequency.of(verdict.best) ?? 0) < config.repeatedMinZipf
+      ) {
+        continue;
+      }
       // Faute répétée : seulement une faute légère (accent, lettre doublée) d'un mot courant.
       if (
         repeated &&
@@ -188,7 +236,15 @@ export class SpellingAnalyzer implements LanguageAnalyzer {
 
       // Doute venu du contexte (nom propre possible, mot anglais, mot voulu) :
       // jamais plus qu'une suggestion.
-      const doubtful = midCapital || english || repeated;
+      // Langue incertaine, ou forme féminine en « -eure » corrigée vers une autre
+      // terminaison (« vainqueure » → vainqueur peut changer le genre voulu) : pas de
+      // certitude non plus. « interieure » → intérieure reste une Erreur.
+      const doubtful =
+        midCapital ||
+        english ||
+        repeated ||
+        language !== 'fr' ||
+        (FEMININE_EURE.test(word) && !FEMININE_EURE.test(verdict.best));
       const confidence = doubtful && verdict.confidence === 'high' ? 'medium' : verdict.confidence;
       const suggestion = matchCase(verdict.best, word);
       const alternatives = verdict.alternatives.slice(0, 2).map((alt) => matchCase(alt, word));
@@ -287,6 +343,53 @@ export class SpellingAnalyzer implements LanguageAnalyzer {
     };
   }
 
+  /**
+   * Mot inconnu dans une phrase en anglais : faute anglaise évidente seulement
+   * (une seule correction connue à une modification près), en Suggestion. Les noms
+   * propres possibles, les mots connus en anglais et les termes répétés sont ignorés.
+   */
+  private englishIssue(
+    block: Block,
+    word: string,
+    start: number,
+    context: AnalyzerContext,
+    lexicon: SpellingLexicon,
+    facts: { capitalized: boolean; repeated: boolean; budget: number },
+  ): LanguageIssue | null {
+    if (facts.capitalized || facts.repeated) return null;
+    const lower = word.toLowerCase();
+    if (!/^[a-z]+$/.test(lower)) return null;
+    // Corrections : formes exactes du dictionnaire anglais seulement. Le retrait
+    // approximatif des terminaisons (`has`) accepterait « occured » ou « managment ».
+    const english = lexicon.foreign;
+    if (!(english instanceof EnglishWordList)) return null;
+    if (english.hasExactOrBritish(lower)) return null;
+    const key = `${ENGLISH_COUNTER}:${lower}`;
+    if (!context.document.counters.has(key)) {
+      const used = context.document.counters.get(ENGLISH_COUNTER) ?? 0;
+      if (used >= facts.budget) return null;
+      context.document.counters.set(ENGLISH_COUNTER, used + 1);
+      context.document.counters.set(key, 1);
+    }
+    const corrections = englishCorrections(lower, english);
+    if (corrections.length !== 1 || !corrections[0]) return null;
+    const suggestion = corrections[0];
+    return {
+      rule: 'misspelling',
+      category: 'spelling',
+      subtype: 'misspelling',
+      blockId: block.id,
+      original: word,
+      suggestion,
+      explanation: `« ${word} » ne figure pas dans le dictionnaire anglais (phrase en anglais). Vouliez-vous écrire « ${suggestion} » ?`,
+      severity: 'minor',
+      confidence: 'medium',
+      source: 'rules',
+      relatedBlockIds: [],
+      range: { start, end: start + word.length },
+    };
+  }
+
   /** Écarte ce qui ressemble à un sigle, un nom de produit ou un mot composé. */
   private isCandidate(word: string, context: AnalyzerContext): boolean {
     const config = context.config.spelling;
@@ -297,6 +400,29 @@ export class SpellingAnalyzer implements LanguageAnalyzer {
     if (/.\p{Lu}/u.test(word)) return false; // majuscule interne : GitHub, MongoDB, RESTful
     return true;
   }
+}
+
+/** Forme féminine en « -eure » employée, quand le féminin régulier est connu. */
+function feminineIssue(
+  block: Block,
+  word: string,
+  start: number,
+  recommended: string,
+): LanguageIssue {
+  return {
+    rule: 'misspelling',
+    category: 'spelling',
+    subtype: 'misspelling',
+    blockId: block.id,
+    original: word,
+    suggestion: recommended,
+    explanation: `« ${word} » est une forme féminine employée, absente du dictionnaire ; la forme recommandée est « ${recommended} ».`,
+    severity: 'minor',
+    confidence: 'medium',
+    source: 'rules',
+    relatedBlockIds: [],
+    range: { start, end: start + word.length },
+  };
 }
 
 /** Corrections proposées pour un cas ambigu : proches, assez courantes, au plus `max`. */

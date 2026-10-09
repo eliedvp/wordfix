@@ -12,6 +12,8 @@ import {
   type LanguageEngineConfig,
   type LanguageRuleId,
 } from './config.js';
+import { detectBlockLanguage, detectDocumentLanguage, type LanguageLexicon } from './detection.js';
+import { peekSpellingDictionaries } from './spelling/dictionaries.js';
 import { findProtectedRanges, WORD_PATTERN } from './text.js';
 import type {
   AnalyzerContext,
@@ -44,12 +46,18 @@ export class LanguageEngine {
     const out: LanguageIssue[] = [];
     const hasDroppedInlineContent = input.meta.skipped.equations > 0;
     const caps = documentCaps(this.config, input.meta.wordCount);
+    const languageKinds = new Set(this.config.languageBlockKinds);
     const document: DocumentContext = {
       wordCount: input.meta.wordCount,
       wordCounts: countWords(input, this.config),
       counters: new Map(),
       grammar: input.grammar ?? null,
+      language: detectDocumentLanguage(
+        input.blocks.filter((block) => languageKinds.has(block.kind)),
+        this.config.language,
+      ),
     };
+    const lexicon = languageLexicon();
 
     for (const block of input.blocks) {
       if (block.text.trim().length === 0) continue;
@@ -61,6 +69,7 @@ export class LanguageEngine {
         protectedRanges: findProtectedRanges(block.text),
         hasDroppedInlineContent,
         document,
+        language: detectBlockLanguage(block, document.language, this.config.language, lexicon),
       };
       const found: LanguageIssue[] = [];
       for (const analyzer of accepting) {
@@ -94,6 +103,19 @@ export function createLanguageEngine(config: LanguageEngineConfig = LANGUAGE_ENG
     ],
     config,
   );
+}
+
+/**
+ * Dictionnaires français et anglais comme indice secondaire de langue, s'ils sont
+ * chargés (toujours le cas dans le worker, qui les attend avant chaque analyse).
+ */
+function languageLexicon(): LanguageLexicon | null {
+  const dictionaries = peekSpellingDictionaries();
+  if (!dictionaries) return null;
+  return {
+    isFrench: (word) => dictionaries.french.isCorrect(word),
+    isEnglish: (word) => dictionaries.english.has(word),
+  };
 }
 
 /** Plafond de chaque règle pour ce document : le minimum, ou proportionnel à la longueur. */

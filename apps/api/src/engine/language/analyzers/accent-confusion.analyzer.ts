@@ -38,6 +38,8 @@ export class AccentConfusionAnalyzer implements LanguageAnalyzer {
       const start = match.index;
       if ([...word].length < config.confusionMinLength || TECHNICAL.has(word)) continue;
       if (overlapsAny(context.protectedRanges, start, start + word.length)) continue;
+      // Confusion d'accents française : seulement dans un passage sûrement en français.
+      if (context.language.at(start) !== 'fr') continue;
       const own = frequency.of(word);
       if (own === null) continue; // mot inconnu : traité par l'orthographe
       // Mot employé souvent dans le document : choix voulu de l'auteur.

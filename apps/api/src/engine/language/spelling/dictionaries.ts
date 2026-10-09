@@ -1,5 +1,5 @@
 import type NSpell from 'nspell';
-import { EnglishWordList, parseDicStems } from './english-words.js';
+import { EnglishWordList, parseAffixes, parseDicStems } from './english-words.js';
 import { loadFrequencies, type WordFrequency } from './frequency.js';
 
 /**
@@ -171,7 +171,12 @@ export function loadSpellingDictionaries(): Promise<SpellingDictionaries> {
     const started = performance.now();
     stats.rssBeforeMb = megabytes(process.memoryUsage().rss);
     const spell = nspell({ aff: toBuffer(french.aff), dic: toBuffer(french.dic) });
-    const englishWords = new EnglishWordList(parseDicStems(english.dic));
+    // Formes de base (anglicismes, comportement historique) et formes développées
+    // (passages en anglais) : un texte français est relu exactement comme avant.
+    const englishWords = new EnglishWordList(
+      parseDicStems(english.dic),
+      parseDicStems(english.dic, parseAffixes(english.aff)),
+    );
     const frequency = loadFrequencies();
     stats.loads++;
     stats.frequencyWords = frequency.size;
@@ -194,6 +199,11 @@ export function getSpellingDictionaries(): SpellingDictionaries {
       'Dictionnaires non chargés : appelez loadSpellingDictionaries() avant l’analyse.',
     );
   }
+  return loaded;
+}
+
+/** Dictionnaires s'ils sont déjà chargés, sinon null (jamais d'erreur ni de chargement). */
+export function peekSpellingDictionaries(): SpellingDictionaries | null {
   return loaded;
 }
 

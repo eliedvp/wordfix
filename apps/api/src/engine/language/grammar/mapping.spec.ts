@@ -1,6 +1,7 @@
 import type { Block } from '@wordfix/shared';
 import { describe, expect, it } from 'vitest';
 import { LANGUAGE_ENGINE_CONFIG } from '../config.js';
+import { FRENCH_TEXT } from '../detection.js';
 import { findProtectedRanges } from '../text.js';
 import type { AnalyzerContext } from '../types.js';
 import type { GrammalecteError } from './grammalecte-client.js';
@@ -32,7 +33,14 @@ function contextOf(text: string): AnalyzerContext {
     config: LANGUAGE_ENGINE_CONFIG,
     protectedRanges: findProtectedRanges(text),
     hasDroppedInlineContent: false,
-    document: { wordCount: 100, wordCounts: new Map(), counters: new Map(), grammar: null },
+    document: {
+      wordCount: 100,
+      wordCounts: new Map(),
+      counters: new Map(),
+      grammar: null,
+      language: 'fr',
+    },
+    language: FRENCH_TEXT,
   };
 }
 

@@ -1,4 +1,5 @@
 import type { BlockKind } from '@wordfix/shared';
+import type { LanguageDetectionConfig } from './detection.js';
 
 /**
  * Réglages du WordFix Language Engine, centralisés ici.
@@ -35,6 +36,11 @@ export interface LanguageEngineConfig {
   spelling: SpellingConfig;
   grammar: GrammarConfig;
   ambiguity: AmbiguityConfig;
+  /**
+   * Langue de chaque phrase (detection.ts) : les règles propres au français ne
+   * s'appliquent pas à un passage en anglais ; en cas de doute, pas de certitude.
+   */
+  language: LanguageDetectionConfig;
 }
 
 /**
@@ -288,6 +294,11 @@ export const LANGUAGE_ENGINE_CONFIG: LanguageEngineConfig = {
     ],
     maxParagraphLength: 20_000,
     batchLength: 40_000,
+  },
+  language: {
+    minEvidence: 2,
+    dominanceRatio: 2,
+    accentWeight: 0.5,
   },
   ambiguity: {
     maxOptions: 5,

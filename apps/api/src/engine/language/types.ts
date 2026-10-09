@@ -1,6 +1,7 @@
 import type { Block, BlockKind, DocumentModel, TextRange } from '@wordfix/shared';
 import type { CandidateIssue } from '../types.js';
 import type { LanguageEngineConfig, LanguageRuleId } from './config.js';
+import type { LanguageMap } from './detection.js';
 import type { GrammalecteError } from './grammar/grammalecte-client.js';
 
 /**
@@ -30,6 +31,8 @@ export interface AnalyzerContext {
   hasDroppedInlineContent: boolean;
   /** Informations calculées une fois pour tout le document. */
   document: DocumentContext;
+  /** Langue de chaque phrase du paragraphe (français, anglais ou incertain). */
+  language: LanguageMap;
 }
 
 /** Contexte partagé par tous les paragraphes d'un même document, pendant une analyse. */
@@ -42,6 +45,8 @@ export interface DocumentContext {
   counters: Map<string, number>;
   /** Erreurs Grammalecte du document, si la vérification grammaticale a eu lieu. */
   grammar: GrammarFindings | null;
+  /** Langue dominante du document (repli des passages trop courts pour trancher). */
+  language: 'fr' | 'en';
 }
 
 /**
