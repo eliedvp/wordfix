@@ -1,4 +1,4 @@
-import type { AnalysisStepKey, AnalysisWarning } from '@wordfix/shared';
+import type { AnalysisStepKey, AnalysisWarning, SkippedAiCheckDto } from '@wordfix/shared';
 
 /**
  * Textes de confidentialité validés (décision P1). Ce sont les SEULS affichés :
@@ -41,6 +41,28 @@ export const WARNING_TEXTS: Record<AnalysisWarning, string> = {
   ISSUES_CAPPED:
     'Beaucoup de points ont été relevés : seuls les 500 plus importants sont affichés.',
 };
+
+const plural = (n: number, one: string, many: string) => (n > 1 ? many : one);
+
+/** Détail d'une vérification IA non effectuée (affiché sous AI_CHECKS_SKIPPED). */
+export function skippedAiCheckText({ check, skipped, total }: SkippedAiCheckDto): string {
+  switch (check) {
+    case 'local':
+      return skipped === total
+        ? 'Relecture par IA paragraphe par paragraphe : non effectuée.'
+        : `Relecture par IA paragraphe par paragraphe : ${skipped} ${plural(skipped, 'passage', 'passages')} sur ${total} non ${plural(skipped, 'relu', 'relus')}.`;
+    case 'context':
+      return skipped === total
+        ? 'Cohérence de chaque section : non vérifiée.'
+        : `Cohérence de chaque section : ${skipped} ${plural(skipped, 'groupe', 'groupes')} de sections sur ${total} non ${plural(skipped, 'vérifié', 'vérifiés')}.`;
+    case 'global':
+      return skipped === total
+        ? 'Cohérence du document entier (contradictions entre les parties) : non vérifiée.'
+        : `Cohérence du document entier : ${skipped} ${plural(skipped, 'vérification', 'vérifications')} sur ${total} non ${plural(skipped, 'effectuée', 'effectuées')}.`;
+    case 'ambiguity':
+      return `Mots ambigus : ${skipped === total ? `${total} cas` : `${skipped} cas sur ${total}`} non ${plural(skipped, 'départagé', 'départagés')} par l’IA. Ils gardent le résultat des vérifications automatiques (« À vérifier » ou aucune remarque).`;
+  }
+}
 
 export function scoreSentence(score: number): string {
   if (score >= 90) return 'Très peu de points à revoir.';

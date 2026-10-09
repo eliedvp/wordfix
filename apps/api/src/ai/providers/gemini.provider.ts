@@ -12,6 +12,7 @@ import {
   type StructuredRequest,
   type StructuredResult,
 } from '../ai-provider.js';
+import type { RequestRateLimiter } from '../rate-limiter.js';
 import { toStrictJsonSchema } from '../strict-json-schema.js';
 
 export interface GeminiAiProviderOptions {
@@ -20,16 +21,29 @@ export interface GeminiAiProviderOptions {
   maxRetries: number;
   /** Niveau de réflexion des modèles Gemini 3.x ; null : valeur par défaut du modèle. */
   thinkingLevel: ThinkingLevel | null;
+  /**
+   * Limiteur partagé par tous les appels du processus (GEMINI_REQUESTS_PER_MINUTE) :
+   * chaque requête, nouvel essai compris, attend sa place. Il porte aussi la pause
+   * commune après un 429 (voir rate-limiter.ts).
+   */
+  rateLimiter: RequestRateLimiter;
+  /** Journal des limites de débit rencontrées (jamais la clé ni le contenu envoyé). */
+  logger?: { warn: (data: Record<string, unknown>, message: string) => void };
   /** Permet aux tests d'intercepter les appels HTTP (aucun appel réseau en test). */
   fetch?: typeof fetch;
-  /** Attente entre deux essais après une limite de débit (remplaçable en test). */
-  sleep?: (ms: number) => Promise<void>;
 }
 
 /** Codes HTTP réessayés par le SDK lui-même (le 429 est traité ici : quota ou débit). */
 const SDK_RETRY_STATUSES = [408, 500, 502, 503, 504];
-/** Attente maximale acceptée avant un nouvel essai après une limite de débit. */
-const MAX_RATE_LIMIT_WAIT_MS = 30_000;
+/**
+ * Attente maximale acceptée avant un nouvel essai après une limite de débit. Sur
+ * l'offre gratuite, Google demande souvent d'attendre 40 à 60 s (quota par minute).
+ * Au-delà, ce n'est plus une limite par minute : l'appel échoue (`unavailable`).
+ */
+export const MAX_RATE_LIMIT_WAIT_MS = 90_000;
+/** Attente sans délai indiqué par Google : 2 s, 4 s, 8 s… (plafonnée). */
+const BACKOFF_BASE_MS = 2_000;
+const BACKOFF_MAX_MS = 60_000;
 /** Fins de génération qui signifient « pas de réponse exploitable ». */
 const BLOCKED_FINISH_REASONS = new Set([
   'SAFETY',
@@ -64,7 +78,6 @@ const BLOCKED_FINISH_REASONS = new Set([
 export class GeminiAiProvider implements AiProvider {
   readonly name = 'gemini';
   private readonly client: GoogleGenAI;
-  private readonly sleep: (ms: number) => Promise<void>;
 
   constructor(private readonly options: GeminiAiProviderOptions) {
     this.client = new GoogleGenAI({
@@ -78,7 +91,6 @@ export class GeminiAiProvider implements AiProvider {
         ...(options.fetch ? { fetch: options.fetch } : {}),
       },
     });
-    this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   }
 
   async generateStructured<T>(request: StructuredRequest<T>): Promise<StructuredResult<T>> {
@@ -128,14 +140,20 @@ export class GeminiAiProvider implements AiProvider {
   }
 
   /**
-   * Le SDK réessaie seul les pannes temporaires (5xx, délai). Le 429 est traité ici :
-   * quota quotidien épuisé → `quota` sans nouvel essai ; limite de débit (par minute)
-   * → nouvel essai après le délai indiqué par Google, dans la limite de maxRetries.
+   * Chaque requête attend sa place dans le limiteur partagé. Le SDK réessaie seul les
+   * pannes temporaires (5xx, délai). Le 429 est traité ici :
+   * - quota quotidien épuisé → `quota`, sans nouvel essai ;
+   * - limite de débit (par minute) → pause commune de la durée indiquée par Google
+   *   (`retryDelay`), ou attente croissante (2 s, 4 s, 8 s…) s'il n'en indique pas,
+   *   puis nouvel essai, au plus maxRetries fois ; ensuite `unavailable`.
+   * La pause s'applique à tous les appels du processus, même quand cet appel-ci
+   * abandonne : les autres morceaux n'épuisent pas le quota en réessayant aussitôt.
    */
   private async callWithRateLimitRetries<T>(
     request: StructuredRequest<T>,
   ): Promise<GenerateContentResponse> {
     for (let attempt = 0; ; attempt++) {
+      await this.options.rateLimiter.acquire();
       try {
         return await this.client.models.generateContent({
           model: request.model,
@@ -152,9 +170,17 @@ export class GeminiAiProvider implements AiProvider {
         });
       } catch (error) {
         const translated = translateGeminiError(error);
-        const wait = rateLimitDelay(error);
-        if (wait === null || attempt >= this.options.maxRetries) throw translated;
-        await this.sleep(wait);
+        const wait = rateLimitDelay(error, attempt);
+        if (wait === null) throw translated;
+        const retry = attempt < this.options.maxRetries && wait <= MAX_RATE_LIMIT_WAIT_MS;
+        this.options.rateLimiter.pause(Math.min(wait, MAX_RATE_LIMIT_WAIT_MS));
+        this.options.logger?.warn(
+          { model: request.model, attempt: attempt + 1, waitMs: wait, retry },
+          retry
+            ? 'Limite de débit Gemini (429) : pause commune avant un nouvel essai'
+            : 'Limite de débit Gemini (429) : abandon de cet appel',
+        );
+        if (!retry) throw translated;
       }
     }
   }
@@ -227,15 +253,19 @@ function isDailyQuota(body: GoogleErrorBody): boolean {
   return violations.some((v) => /PerDay/i.test(v.quotaId ?? ''));
 }
 
-/** Délai avant un nouvel essai pour une limite de débit ; null si on ne réessaie pas. */
-function rateLimitDelay(error: unknown): number | null {
+/**
+ * Attente demandée après une limite de débit (429 par minute) : le `retryDelay` de
+ * Google s'il est indiqué, sinon 2 s, 4 s, 8 s… selon l'essai. null : pas une limite
+ * de débit (autre erreur, ou quota quotidien épuisé).
+ */
+export function rateLimitDelay(error: unknown, attempt: number): number | null {
   if (!(error instanceof ApiError) || error.status !== 429) return null;
   const body = errorBody(error);
   if (isDailyQuota(body)) return null;
   const retryDelay = body.error?.details?.find((d) => d.retryDelay)?.retryDelay;
   const seconds = retryDelay ? Number.parseFloat(retryDelay) : Number.NaN;
-  const wait = Number.isFinite(seconds) ? seconds * 1000 : 2_000;
-  return wait <= MAX_RATE_LIMIT_WAIT_MS ? wait : null;
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.ceil(seconds * 1000);
+  return Math.min(BACKOFF_BASE_MS * 2 ** attempt, BACKOFF_MAX_MS);
 }
 
 export function translateGeminiError(error: unknown): AiError {

@@ -21,6 +21,11 @@ const completedWithoutAi: AnalysisDto = {
   score: 82,
   scoreDetail: null,
   warnings: ['AI_CHECKS_SKIPPED'],
+  skippedAiChecks: [
+    { check: 'local', skipped: 3, total: 12 },
+    { check: 'global', skipped: 1, total: 1 },
+    { check: 'ambiguity', skipped: 2, total: 2 },
+  ],
   errorCode: null,
   wordCount: 1200,
   estimatedPages: 4,
@@ -66,5 +71,31 @@ describe('Analyse terminée sans IA', () => {
     );
     expect(screen.getByText(AI_NOTICE)).toBeInTheDocument();
     expect(screen.getByText('82')).toBeInTheDocument();
+  });
+
+  it('détaille les vérifications IA non effectuées (limite de débit, indisponibilité…)', () => {
+    render(
+      <SummaryBand analysis={completedWithoutAi} activeNatures={[]} onToggleNature={() => {}} />,
+    );
+    const list = screen.getByRole('list', { name: 'Vérifications IA non effectuées' });
+    expect(list).toHaveTextContent(
+      'Relecture par IA paragraphe par paragraphe : 3 passages sur 12 non relus.',
+    );
+    expect(list).toHaveTextContent(
+      'Cohérence du document entier (contradictions entre les parties) : non vérifiée.',
+    );
+    expect(list).toHaveTextContent('Mots ambigus : 2 cas non départagés par l’IA.');
+  });
+
+  it('aucun détail quand toutes les vérifications IA ont abouti', () => {
+    render(
+      <SummaryBand
+        analysis={{ ...completedWithoutAi, warnings: [], skippedAiChecks: [] }}
+        activeNatures={[]}
+        onToggleNature={() => {}}
+      />,
+    );
+    expect(screen.queryByText(AI_NOTICE)).not.toBeInTheDocument();
+    expect(screen.queryByRole('list', { name: 'Vérifications IA non effectuées' })).toBeNull();
   });
 });

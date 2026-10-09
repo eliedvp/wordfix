@@ -6,7 +6,7 @@ import { Info, Lightbulb, TriangleAlert } from 'lucide-react';
 import { useState } from 'react';
 import { ProgressBar } from '@/components/ui/progress-bar';
 import { Ring } from '@/components/ui/score-ring';
-import { scoreSentence, WARNING_TEXTS } from '@/lib/copy';
+import { scoreSentence, skippedAiCheckText, WARNING_TEXTS } from '@/lib/copy';
 import { formatNumber, formatPages } from '@/lib/format';
 import { NATURE_ORDER, NATURES } from '@/lib/nature';
 import { cn } from '@/lib/utils';
@@ -149,7 +149,19 @@ export function SummaryBand({
               className="rounded-control flex items-start gap-2 border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-900"
             >
               <TriangleAlert className="mt-0.5 size-4 shrink-0" aria-hidden />
-              {WARNING_TEXTS[warning]}
+              <div>
+                {WARNING_TEXTS[warning]}
+                {warning === 'AI_CHECKS_SKIPPED' && analysis.skippedAiChecks.length > 0 ? (
+                  <ul
+                    className="mt-1.5 list-disc space-y-0.5 pl-4"
+                    aria-label="Vérifications IA non effectuées"
+                  >
+                    {analysis.skippedAiChecks.map((item) => (
+                      <li key={item.check}>{skippedAiCheckText(item)}</li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
             </li>
           ))}
         </ul>

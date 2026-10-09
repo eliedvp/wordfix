@@ -2,6 +2,7 @@ import { ThinkingLevel } from '@google/genai';
 import { describe, expect, it, vi } from 'vitest';
 import { ambiguityResolutionSchema, localReviewSchema } from '../../engine/schemas.js';
 import { AiError } from '../ai-provider.js';
+import { RequestRateLimiter } from '../rate-limiter.js';
 import {
   GeminiAiProvider,
   geminiThinkingLevel,
@@ -66,6 +67,25 @@ const request = {
   maxOutputTokens: 1000,
 };
 
+/**
+ * Limiteur sur une horloge simulée : chaque attente avance l'horloge et est notée.
+ * Suffisant pour des appels successifs (la concurrence est testée avec les
+ * minuteurs simulés de Vitest, dans gemini-rate-limit.spec.ts).
+ */
+function virtualLimiter(requestsPerMinute: number | null = null) {
+  const clock = { now: 0, waits: [] as number[] };
+  const limiter = new RequestRateLimiter({
+    requestsPerMinute,
+    now: () => clock.now,
+    sleep: (ms) => {
+      clock.now += ms;
+      clock.waits.push(ms);
+      return Promise.resolve();
+    },
+  });
+  return { limiter, clock };
+}
+
 function provider(fetchImpl: typeof fetch, options: Partial<GeminiAiProviderOptions> = {}) {
   return new GeminiAiProvider({
     apiKey: TEST_KEY,
@@ -73,7 +93,7 @@ function provider(fetchImpl: typeof fetch, options: Partial<GeminiAiProviderOpti
     maxRetries: 0,
     thinkingLevel: ThinkingLevel.LOW,
     fetch: fetchImpl,
-    sleep: () => Promise.resolve(),
+    rateLimiter: virtualLimiter().limiter,
     ...options,
   });
 }
@@ -286,28 +306,124 @@ describe('GeminiAiProvider', () => {
         { '@type': 'type.googleapis.com/google.rpc.RetryInfo', retryDelay: '3s' },
       ]);
 
+    const perMinuteAfter = (retryDelay?: string) => () =>
+      googleError(429, 'RESOURCE_EXHAUSTED', 'You exceeded your current quota.', [
+        {
+          '@type': 'type.googleapis.com/google.rpc.QuotaFailure',
+          violations: [{ quotaId: 'GenerateRequestsPerMinutePerProjectPerModel-FreeTier' }],
+        },
+        ...(retryDelay
+          ? [{ '@type': 'type.googleapis.com/google.rpc.RetryInfo', retryDelay }]
+          : []),
+      ]);
+
     it('limite de débit (429 par minute) → attend le délai indiqué puis réessaie', async () => {
       const seen: Seen = { calls: 0 };
-      const sleep = vi.fn(() => Promise.resolve());
+      const { limiter, clock } = virtualLimiter();
       const result = await provider(
         fakeFetch([perMinute, () => okResponse('{"issues":[]}')], seen),
-        {
-          maxRetries: 2,
-          sleep,
-        },
+        { maxRetries: 2, rateLimiter: limiter },
       ).generateStructured(request);
       expect(result.data).toEqual({ issues: [] });
       expect(seen.calls).toBe(2);
-      expect(sleep).toHaveBeenCalledWith(3000);
+      expect(clock.waits).toEqual([3000]);
+    });
+
+    it('délai de l’offre gratuite (42 s, au-delà de l’ancien plafond de 30 s) → respecté puis nouvel essai', async () => {
+      const seen: Seen = { calls: 0 };
+      const { limiter, clock } = virtualLimiter();
+      const warn = vi.fn();
+      const result = await provider(
+        fakeFetch([perMinuteAfter('42.5s'), () => okResponse('{"issues":[]}')], seen),
+        { maxRetries: 3, rateLimiter: limiter, logger: { warn } },
+      ).generateStructured(request);
+      expect(result.data).toEqual({ issues: [] });
+      expect(seen.calls).toBe(2);
+      expect(clock.waits).toEqual([42_500]);
+      expect(warn).toHaveBeenCalledWith(
+        { model: 'gemini-test', attempt: 1, waitMs: 42_500, retry: true },
+        expect.stringContaining('429'),
+      );
+      // Le journal ne contient jamais la clé.
+      expect(JSON.stringify(warn.mock.calls)).not.toContain(TEST_KEY);
+    });
+
+    it('sans délai indiqué → attente croissante (2 s, 4 s) puis succès', async () => {
+      const seen: Seen = { calls: 0 };
+      const { limiter, clock } = virtualLimiter();
+      const result = await provider(
+        fakeFetch([perMinuteAfter(), perMinuteAfter(), () => okResponse('{"issues":[]}')], seen),
+        { maxRetries: 3, rateLimiter: limiter },
+      ).generateStructured(request);
+      expect(result.data).toEqual({ issues: [] });
+      expect(seen.calls).toBe(3);
+      expect(clock.waits).toEqual([2_000, 4_000]);
+    });
+
+    it('délai trop long (> 90 s) → unavailable sans nouvel essai, mais pause commune posée', async () => {
+      const seen: Seen = { calls: 0 };
+      const { limiter, clock } = virtualLimiter();
+      const ai = provider(
+        fakeFetch([perMinuteAfter('300s'), () => okResponse('{"issues":[]}')], seen),
+        {
+          maxRetries: 3,
+          rateLimiter: limiter,
+        },
+      );
+      const error = await errorOf(ai.generateStructured(request));
+      expect(error).toMatchObject({ kind: 'unavailable' });
+      expect(seen.calls).toBe(1);
+      // L'appel suivant (autre morceau) attend la fin de la pause plafonnée à 90 s.
+      await ai.generateStructured(request);
+      expect(clock.waits).toEqual([90_000]);
+      expect(seen.calls).toBe(2);
+    });
+
+    it('quota quotidien épuisé → aucune pause imposée aux autres appels', async () => {
+      const { limiter, clock } = virtualLimiter();
+      const daily = () =>
+        googleError(429, 'RESOURCE_EXHAUSTED', 'You exceeded your current quota.', [
+          {
+            '@type': 'type.googleapis.com/google.rpc.QuotaFailure',
+            violations: [{ quotaId: 'GenerateRequestsPerDayPerProjectPerModel-FreeTier' }],
+          },
+          { '@type': 'type.googleapis.com/google.rpc.RetryInfo', retryDelay: '20s' },
+        ]);
+      const error = await errorOf(
+        provider(fakeFetch([daily]), { maxRetries: 3, rateLimiter: limiter }).generateStructured(
+          request,
+        ),
+      );
+      expect(error).toMatchObject({ kind: 'quota' });
+      expect(clock.waits).toEqual([]);
+    });
+
+    it('chaque requête, nouvel essai compris, attend sa place dans le limiteur', async () => {
+      const seen: Seen = { calls: 0 };
+      const { limiter, clock } = virtualLimiter(5);
+      const ai = provider(fakeFetch([() => okResponse('{"issues":[]}')], seen), {
+        rateLimiter: limiter,
+      });
+      await ai.generateStructured(request);
+      await ai.generateStructured(request);
+      await ai.generateStructured(request);
+      expect(seen.calls).toBe(3);
+      expect(clock.waits).toEqual([12_000, 12_000]);
     });
 
     it('limite de débit persistante → unavailable après maxRetries', async () => {
       const seen: Seen = { calls: 0 };
+      const { limiter, clock } = virtualLimiter();
       const error = await errorOf(
-        provider(fakeFetch([perMinute], seen), { maxRetries: 2 }).generateStructured(request),
+        provider(fakeFetch([perMinute], seen), {
+          maxRetries: 2,
+          rateLimiter: limiter,
+        }).generateStructured(request),
       );
       expect(error).toMatchObject({ kind: 'unavailable' });
+      expect((error as AiError).retryable).toBe(true);
       expect(seen.calls).toBe(3);
+      expect(clock.waits).toEqual([3000, 3000]);
     });
 
     it('panne du fournisseur (503) → unavailable', async () => {

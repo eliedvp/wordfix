@@ -15,6 +15,7 @@ import {
   type ScoreDetail,
 } from '@wordfix/shared';
 import type { Analysis, Document, PrismaClient } from '../generated/prisma/client.js';
+import { skippedAiChecks } from '../engine/skipped-ai-checks.js';
 
 const STATUS_STEP: Partial<Record<AnalysisStatus, AnalysisStepKey>> = {
   EXTRACTING: 'extract',
@@ -63,29 +64,44 @@ export async function toAnalysisDto(
   prisma: PrismaClient,
   analysis: Analysis & { document: Document },
 ): Promise<AnalysisDto> {
-  const [byNature, byCategory, bySource, reviewedCount, chunkGroups] = await Promise.all([
-    prisma.issue.groupBy({
-      by: ['nature'],
-      where: { analysisId: analysis.id },
-      _count: { _all: true },
-    }),
-    prisma.issue.groupBy({
-      by: ['category'],
-      where: { analysisId: analysis.id },
-      _count: { _all: true },
-    }),
-    prisma.issue.groupBy({
-      by: ['source'],
-      where: { analysisId: analysis.id },
-      _count: { _all: true },
-    }),
-    prisma.issue.count({ where: { analysisId: analysis.id, status: { not: 'open' } } }),
-    prisma.analysisChunk.groupBy({
-      by: ['stage', 'status'],
-      where: { analysisId: analysis.id },
-      _count: { _all: true },
-    }),
-  ]);
+  const [byNature, byCategory, bySource, reviewedCount, chunkGroups, aiOutcomes] =
+    await Promise.all([
+      prisma.issue.groupBy({
+        by: ['nature'],
+        where: { analysisId: analysis.id },
+        _count: { _all: true },
+      }),
+      prisma.issue.groupBy({
+        by: ['category'],
+        where: { analysisId: analysis.id },
+        _count: { _all: true },
+      }),
+      prisma.issue.groupBy({
+        by: ['source'],
+        where: { analysisId: analysis.id },
+        _count: { _all: true },
+      }),
+      prisma.issue.count({ where: { analysisId: analysis.id, status: { not: 'open' } } }),
+      prisma.analysisChunk.groupBy({
+        by: ['stage', 'status'],
+        where: { analysisId: analysis.id },
+        _count: { _all: true },
+      }),
+      // Détail des vérifications IA non effectuées : seulement si l'analyse le signale.
+      (analysis.warnings as AnalysisWarning[] | null)?.includes('AI_CHECKS_SKIPPED')
+        ? prisma.analysisChunk.findMany({
+            where: { analysisId: analysis.id },
+            select: {
+              stage: true,
+              index: true,
+              status: true,
+              errorCode: true,
+              blockIds: true,
+              result: true,
+            },
+          })
+        : Promise.resolve([]),
+    ]);
 
   const natureCounts = Object.fromEntries(ISSUE_NATURES.map((n) => [n, 0])) as NatureCounts;
   for (const row of byNature) natureCounts[row.nature] = row._count._all;
@@ -108,6 +124,7 @@ export async function toAnalysisDto(
     score: analysis.score,
     scoreDetail: (analysis.scoreDetail as ScoreDetail | null) ?? null,
     warnings: (analysis.warnings as AnalysisWarning[] | null) ?? [],
+    skippedAiChecks: skippedAiChecks(aiOutcomes),
     errorCode: errorCodeOf(analysis.errorCode),
     wordCount: analysis.document.wordCount,
     estimatedPages: analysis.document.estimatedPages,
