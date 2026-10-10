@@ -38,6 +38,7 @@ L'API et le worker partagent le même code (`infrastructureImports` dans `app.mo
 
 ## Moteur et IA
 
+- **Mode IA** (`AI_PROVIDER`) : `none` par défaut, aucune IA. Le worker démarre sans clé, aucun SDK n'est chargé, aucun morceau IA n'est planifié et l'analyse est marquée `AI_DISABLED` (étapes IA « sautées », score présenté comme « sans IA »). `openai`/`gemini` : appels payants, refusés au démarrage sans `AI_PAID_CALLS_ENABLED=true` et `AI_DAILY_TOKEN_BUDGET` > 0. `GET /api/ai-mode` expose le mode, sans secret, pour la page Confidentialité.
 - `ai/ai-provider.ts` : interface unique ; `OpenAiProvider` (Responses API, sortie JSON stricte, `store: false`) ; `GeminiAiProvider` (SDK officiel `@google/genai`, `generateContent` sans état, sortie JSON contrainte par `responseJsonSchema`, `AI_PROVIDER=gemini`, modèles `GEMINI_MODEL_*`) pour les essais ; `FakeAiProvider` réservé aux tests. Les règles de l'étape C (option parmi les candidats, jamais d'Erreur) sont dans le moteur, communes à tous les fournisseurs.
 - **Débit et pannes de l'IA** :
   - `ai/rate-limiter.ts` : limiteur partagé par tous les appels Gemini du worker (toutes analyses et tous morceaux confondus). Les requêtes partent au plus `GEMINI_REQUESTS_PER_MINUTE` fois par minute (5 par défaut, offre gratuite de `gemini-3.8-flash`), espacées régulièrement et dans l'ordre des demandes. Portée : un processus ; plusieurs workers sur la même clé doivent se répartir le quota.

@@ -5,8 +5,8 @@ import { z } from 'zod';
  *
  * L'application refuse de démarrer si une variable obligatoire manque ou est
  * invalide : mieux vaut une erreur claire au démarrage qu'une panne au premier
- * upload. Les variables des étapes suivantes (stockage S3, OpenAI) sont
- * facultatives tant que les modules qui les utilisent n'existent pas.
+ * upload. Les clés IA ne sont jamais obligatoires : sans configuration explicite,
+ * WordFix fonctionne sans IA (AI_PROVIDER=none).
  */
 export const envSchema = z
   .object({
@@ -47,7 +47,18 @@ export const envSchema = z
     STORAGE_BUCKET: z.string().optional(),
 
     // IA. Ne jamais committer de vraie clé.
-    AI_PROVIDER: z.enum(['openai', 'gemini', 'fake']).default('openai'),
+    /**
+     * « none » (par défaut) : aucune IA, aucun appel réseau vers un fournisseur ; seul
+     * le moteur local (règles, orthographe, Grammalecte) analyse le document.
+     * « openai » / « gemini » : appels payants, seulement avec AI_PAID_CALLS_ENABLED=true
+     * et un budget quotidien strictement positif. « fake » : tests automatisés seulement.
+     */
+    AI_PROVIDER: z.enum(['none', 'openai', 'gemini', 'fake']).default('none'),
+    /** Autorisation explicite des appels IA payants (false par défaut). */
+    AI_PAID_CALLS_ENABLED: z
+      .enum(['true', 'false'])
+      .default('false')
+      .transform((value) => value === 'true'),
     OPENAI_API_KEY: z.string().optional(),
     GEMINI_API_KEY: z.string().optional(),
     AI_MODEL_FAST: z.string().min(1).default('gpt-5.4-mini'),
@@ -64,8 +75,11 @@ export const envSchema = z
     AI_MAX_RETRIES: z.coerce.number().int().min(0).max(6).default(3),
     /** Appels IA simultanés au plus pour une même analyse. */
     AI_CONCURRENCY: z.coerce.number().int().min(1).max(16).default(4),
-    /** Plafond quotidien de jetons (entrée + sortie), tous utilisateurs confondus. */
-    AI_DAILY_TOKEN_BUDGET: z.coerce.number().int().min(0).default(5_000_000),
+    /**
+     * Plafond quotidien de jetons (entrée + sortie), tous utilisateurs confondus.
+     * 0 (par défaut) : aucun appel IA autorisé. Ce n'est jamais un budget illimité.
+     */
+    AI_DAILY_TOKEN_BUDGET: z.coerce.number().int().min(0).default(0),
 
     // Worker d'analyse.
     WORKER_CONCURRENCY: z.coerce.number().int().min(1).max(16).default(2),
@@ -78,12 +92,31 @@ export const envSchema = z
       .default(process.platform === 'win32' ? 'python' : 'python3'),
   })
   .superRefine((env, ctx) => {
-    if (env.AI_PROVIDER === 'fake' && env.NODE_ENV === 'production') {
+    if (env.AI_PROVIDER === 'fake' && env.NODE_ENV !== 'test') {
       ctx.addIssue({
         code: 'custom',
         path: ['AI_PROVIDER'],
-        message: '« fake » est réservé aux tests automatisés (NODE_ENV=test)',
+        message:
+          "« fake » est réservé aux tests automatisés (NODE_ENV=test) : ce n'est pas une vraie correction ; utilisez « none » pour fonctionner sans IA",
       });
+    }
+    // Appels payants : jamais par défaut. Il faut les autoriser explicitement ET leur
+    // donner un budget quotidien strictement positif.
+    if (env.AI_PROVIDER === 'openai' || env.AI_PROVIDER === 'gemini') {
+      if (!env.AI_PAID_CALLS_ENABLED) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['AI_PAID_CALLS_ENABLED'],
+          message: `doit valoir true pour utiliser AI_PROVIDER=${env.AI_PROVIDER} (appels IA payants) ; sinon, utilisez AI_PROVIDER=none`,
+        });
+      }
+      if (env.AI_DAILY_TOKEN_BUDGET <= 0) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['AI_DAILY_TOKEN_BUDGET'],
+          message: `doit être strictement positif pour utiliser AI_PROVIDER=${env.AI_PROVIDER} (0 = aucun appel IA autorisé)`,
+        });
+      }
     }
     // La politique de confidentialité (page /confidentialite) ne mentionne qu'OpenAI, et
     // l'offre gratuite de l'API Gemini autorise Google à réutiliser les contenus envoyés :

@@ -42,6 +42,13 @@ export function reviewedIssuesWhere(analysisId: string) {
   return { analysisId, status: { not: 'open' as const } };
 }
 
+/** Étapes faites par l'IA : sautées quand l'analyse a été faite sans IA (AI_DISABLED). */
+const AI_STEPS: ReadonlySet<AnalysisStepKey> = new Set(['local', 'context', 'global']);
+
+function warningsOf(analysis: Analysis): AnalysisWarning[] {
+  return (analysis.warnings as AnalysisWarning[] | null) ?? [];
+}
+
 function errorCodeOf(value: string | null): ErrorCode | null {
   return isErrorCode(value) ? value : value ? 'ANALYSIS_FAILED' : null;
 }
@@ -65,6 +72,7 @@ export async function summarize(
     errorCode: errorCodeOf(analysis.errorCode),
     issueCount,
     reviewedCount,
+    aiDisabled: warningsOf(analysis).includes('AI_DISABLED'),
   };
 }
 
@@ -118,7 +126,10 @@ export async function toAnalysisDto(
   for (const row of byCategory) categoryCounts[row.category] = row._count._all;
   const sourceCounts = new Map(bySource.map((row) => [row.source, row._count._all]));
 
-  const steps = buildSteps(analysis, chunkGroups, sourceCounts);
+  const steps = markAiStepsSkipped(
+    buildSteps(analysis, chunkGroups, sourceCounts),
+    warningsOf(analysis).includes('AI_DISABLED'),
+  );
   const issueCount = Object.values(natureCounts).reduce((sum, n) => sum + n, 0);
 
   return {
@@ -146,6 +157,17 @@ export async function toAnalysisDto(
     completedAt: analysis.completedAt?.toISOString() ?? null,
     etaSeconds: estimateRemaining(analysis),
   };
+}
+
+/**
+ * Analyse sans IA : les étapes de relecture par IA n'ont pas eu lieu. Elles sont
+ * affichées « sautées », jamais « terminées », pour ne pas laisser croire le contraire.
+ */
+function markAiStepsSkipped(steps: AnalysisStepDto[], aiDisabled: boolean): AnalysisStepDto[] {
+  if (!aiDisabled) return steps;
+  return steps.map((step) =>
+    AI_STEPS.has(step.key) ? { ...step, state: 'skipped', issueCount: 0 } : step,
+  );
 }
 
 function buildSteps(

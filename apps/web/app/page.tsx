@@ -11,7 +11,8 @@ import {
 import Link from 'next/link';
 import { AnnotatedSpecimen } from '@/components/home/annotated-specimen';
 import { UploadPanel } from '@/components/upload/upload-panel';
-import { PRIVACY_STATEMENTS } from '@/lib/copy';
+import { getAiMode } from '@/lib/ai-mode';
+import { PRIVACY_STATEMENTS, privacyStatements } from '@/lib/copy';
 import { NATURE_ORDER, NATURES } from '@/lib/nature';
 import { cn } from '@/lib/utils';
 
@@ -76,7 +77,9 @@ const AUDIENCES = [
   },
 ];
 
-export default function HomePage() {
+export default async function HomePage() {
+  // Engagements affichés : le dernier dépend du mode IA réellement configuré.
+  const statements = privacyStatements(await getAiMode());
   return (
     <>
       <section className="mx-auto grid w-full max-w-6xl gap-10 px-4 pt-10 pb-16 sm:px-6 lg:grid-cols-[1.05fr_1fr] lg:items-start lg:gap-14 lg:pt-16">
@@ -176,7 +179,7 @@ export default function HomePage() {
             Vos documents restent privés
           </h2>
           <ul className="text-ink-muted mt-4 grid gap-2 md:grid-cols-2">
-            {PRIVACY_STATEMENTS.map((statement) => (
+            {statements.map((statement) => (
               <li key={statement} className="flex gap-2">
                 <ShieldCheck className="text-brand mt-1 size-4 shrink-0" aria-hidden />
                 {statement}

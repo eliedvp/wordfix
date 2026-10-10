@@ -1,16 +1,56 @@
-import type { AnalysisStepKey, AnalysisWarning, SkippedAiCheckDto } from '@wordfix/shared';
+import type { AiMode, AnalysisStepKey, AnalysisWarning, SkippedAiCheckDto } from '@wordfix/shared';
 
 /**
  * Textes de confidentialité validés (décision P1). Ce sont les SEULS affichés :
  * chacun correspond à un mécanisme réellement en place (voir docs/decisions.md).
+ * Le dernier engagement (envoi à un service d'IA) dépend du mode IA réellement
+ * configuré : voir aiPrivacyStatement.
  */
 export const PRIVACY_STATEMENTS = [
   'Connexion chiffrée (HTTPS).',
   'Votre fichier est supprimé au plus tard 24 h après l’import.',
   'Le texte extrait et les résultats sont supprimés après 7 jours. Vous pouvez tout supprimer immédiatement.',
   'Vos analyses ne sont accessibles que depuis ce navigateur. Aucun lien public n’est créé.',
-  'Pour l’analyse, le texte de votre document est envoyé à OpenAI.',
 ] as const;
+
+/**
+ * Engagement sur l'envoi du texte à un service d'IA, selon le mode réellement configuré
+ * (GET /api/ai-mode). Mode inconnu (API injoignable) : formulation prudente, qui ne
+ * prétend jamais que le texte reste sur nos serveurs.
+ */
+export function aiPrivacyStatement(mode: AiMode | null): string {
+  switch (mode) {
+    case 'openai':
+      return 'Pour l’analyse, le texte de votre document est envoyé à OpenAI.';
+    case 'gemini':
+      return 'Pour l’analyse, le texte de votre document est envoyé à Google (Gemini).';
+    case 'none':
+    case 'fake':
+      return 'Votre document n’est envoyé à aucun service d’intelligence artificielle.';
+    default:
+      return 'Selon la configuration du service, le texte de votre document peut être envoyé à OpenAI pour l’analyse.';
+  }
+}
+
+/** Détail de cet engagement (page Confidentialité). */
+export function aiPrivacyDetail(mode: AiMode | null): string {
+  switch (mode) {
+    case 'openai':
+      return 'L’analyse s’appuie sur le service d’intelligence artificielle d’OpenAI : le texte du document lui est envoyé par morceaux. Le fichier Word lui-même ne lui est pas transmis.';
+    case 'gemini':
+      return 'L’analyse s’appuie sur le service d’intelligence artificielle Gemini de Google : le texte du document lui est envoyé par morceaux. Le fichier Word lui-même ne lui est pas transmis.';
+    case 'none':
+    case 'fake':
+      return 'L’analyse est faite uniquement par le moteur de WordFix (orthographe, grammaire et règles automatiques), sur nos serveurs. Aucun service d’intelligence artificielle extérieur ne reçoit le texte de votre document.';
+    default:
+      return 'Le mode d’analyse n’a pas pu être vérifié au moment de l’affichage de cette page. Lorsque l’analyse s’appuie sur l’intelligence artificielle d’OpenAI, le texte du document lui est envoyé par morceaux ; le fichier Word lui-même ne lui est pas transmis.';
+  }
+}
+
+/** Les cinq engagements affichés, le dernier selon le mode IA. */
+export function privacyStatements(mode: AiMode | null): string[] {
+  return [...PRIVACY_STATEMENTS, aiPrivacyStatement(mode)];
+}
 
 export const STEP_LABELS: Record<AnalysisStepKey, { title: string; detail: string }> = {
   extract: { title: 'Lecture du document', detail: 'Titres, sections, tableaux et notes' },
@@ -29,6 +69,8 @@ export const STEP_LABELS: Record<AnalysisStepKey, { title: string; detail: strin
 export const WARNING_TEXTS: Record<AnalysisWarning, string> = {
   PARTIAL_ANALYSIS:
     'Certaines parties n’ont pas pu être analysées. Les résultats affichés restent valables pour le reste du document.',
+  AI_DISABLED:
+    'Analyse effectuée sans IA : seuls l’orthographe, la grammaire (Grammalecte) et les règles automatiques de WordFix ont été vérifiés. Les relectures par IA (style, cohérence des sections et du document) n’ont pas été faites.',
   AI_CHECKS_SKIPPED:
     'Certaines vérifications avancées par IA n’ont pas pu être effectuées. Les résultats affichés proviennent des vérifications automatiques de WordFix.',
   HEADINGS_INFERRED:
@@ -62,6 +104,13 @@ export function skippedAiCheckText({ check, skipped, total }: SkippedAiCheckDto)
     case 'ambiguity':
       return `Mots ambigus : ${skipped === total ? `${total} cas` : `${skipped} cas sur ${total}`} non ${plural(skipped, 'départagé', 'départagés')} par l’IA. Ils gardent le résultat des vérifications automatiques (« À vérifier » ou aucune remarque).`;
   }
+}
+
+/** Ce que couvre le score, selon que l'IA a été utilisée ou non. */
+export function scoreScope(aiDisabled: boolean): string {
+  return aiDisabled
+    ? 'Analyse sans IA : ce score ne tient compte que des vérifications automatiques (orthographe, grammaire, règles). La cohérence du document n’a pas été vérifiée.'
+    : 'Ce score reflète la forme et la cohérence du texte. Il ne juge pas le fond de votre travail.';
 }
 
 export function scoreSentence(score: number): string {

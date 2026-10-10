@@ -27,6 +27,8 @@ export interface AnalysisSummaryDto {
   /** Nombre total de problèmes et nombre déjà traités par l'utilisateur. */
   issueCount: number;
   reviewedCount: number;
+  /** Analyse faite sans IA (AI_PROVIDER=none) : le score ne couvre que le moteur local. */
+  aiDisabled: boolean;
 }
 
 export interface DocumentDto {
@@ -47,6 +49,11 @@ export type AnalysisWarning =
   | 'PARTIAL_ANALYSIS'
   /** Une partie des vérifications par IA n'a pas pu être faite (fournisseur indisponible, quota…). */
   | 'AI_CHECKS_SKIPPED'
+  /**
+   * Analyse faite sans IA (AI_PROVIDER=none) : seul le moteur local (orthographe,
+   * grammaire, règles) a été appliqué ; aucune vérification par IA n'a été faite.
+   */
+  | 'AI_DISABLED'
   | 'HEADINGS_INFERRED'
   | 'NON_FRENCH_DOCUMENT'
   | 'PARSER_FALLBACK'
@@ -175,4 +182,17 @@ export interface IssueListDto {
   total: number;
   /** Texte des paragraphes concernés, pour afficher chaque problème dans son contexte. */
   blocks: Record<string, BlockContextDto>;
+}
+
+/**
+ * Mode IA du service (GET /api/ai-mode, public) : permet au site d'afficher ce qui est
+ * réellement fait du texte. Aucun secret, aucun nom de modèle.
+ * - none : aucun service d'IA ;
+ * - openai / gemini : le texte est envoyé à ce fournisseur pour l'analyse ;
+ * - fake : tests automatisés (aucun envoi).
+ */
+export type AiMode = 'none' | 'openai' | 'gemini' | 'fake';
+
+export interface AiModeDto {
+  mode: AiMode;
 }

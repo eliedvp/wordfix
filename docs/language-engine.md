@@ -27,7 +27,7 @@ Code : `apps/api/src/engine/language/`.
 - Juste avant, la planification fait vérifier la grammaire de tout le document par Grammalecte (processus Python unique du worker, lots de paragraphes) ; les erreurs obtenues sont transmises au moteur, qui reste synchrone. Si Grammalecte est désactivé ou indisponible, l'analyse continue sans vérification grammaticale.
 - Ses problèmes ont la source `rules` (déterministe) ; `local`, `context`, `global` et `verify` désignent l'IA.
 - Quand une règle et l'IA signalent le même endroit (même paragraphe, positions qui se chevauchent, même famille de problème), la finalisation n'en garde qu'un, le plus sûr ; à égalité, celui de la règle.
-- Le moteur ne dépend d'aucun fournisseur d'IA : il fonctionne de la même façon avec OpenAI, Gemini (`AI_PROVIDER=gemini`) ou `AI_PROVIDER=fake`.
+- Le moteur ne dépend d'aucun fournisseur d'IA : il fonctionne de la même façon sans IA (`AI_PROVIDER=none`, par défaut), avec OpenAI, Gemini (`AI_PROVIDER=gemini`) ou `AI_PROVIDER=fake` (tests). Sans IA, les cas ambigus gardent leur forme déterministe et l'analyse est marquée `AI_DISABLED`.
 
 ## Déterministe ou IA
 

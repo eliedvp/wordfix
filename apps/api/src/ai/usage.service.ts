@@ -39,9 +39,12 @@ export class AiUsageService {
     return Number((await this.redis.get(this.key())) ?? 0);
   }
 
-  /** Vrai si le plafond quotidien est atteint (0 = pas de plafond). */
+  /**
+   * Vrai si aucun nouvel appel IA n'est autorisé aujourd'hui : plafond atteint, ou
+   * budget à 0. Un budget à 0 n'est jamais « illimité » : il interdit tout appel IA.
+   */
   async isExhausted(): Promise<boolean> {
-    if (this.budget === 0) return false;
+    if (this.budget <= 0) return true;
     return (await this.usedToday()) >= this.budget;
   }
 }

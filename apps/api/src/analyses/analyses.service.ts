@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import {
   type AnalysisDto,
   type BlockContextDto,
@@ -10,8 +11,10 @@ import {
   type IssueNature,
   isTerminalStatus,
 } from '@wordfix/shared';
+import { aiEnabled } from '../ai/models.js';
 import { AiUsageService } from '../ai/usage.service.js';
 import { AppError } from '../common/errors/app-error.js';
+import type { Env } from '../config/env.schema.js';
 import { newId } from '../common/ids.js';
 import { PROMPT_VERSION } from '../engine/prompts/prompts.v1.js';
 import { LocationResolver } from '../engine/postprocess/location.js';
@@ -27,13 +30,17 @@ const BLOCK_TEXT_LIMIT = 4000;
 @Injectable()
 export class AnalysesService {
   private readonly logger = new Logger(AnalysesService.name);
+  private readonly aiEnabled: boolean;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly queue: AnalysisQueue,
     private readonly usage: AiUsageService,
     private readonly quota: QuotaService,
-  ) {}
+    config: ConfigService<Env, true>,
+  ) {
+    this.aiEnabled = aiEnabled(config);
+  }
 
   /**
    * Lance l'analyse d'un document (2e temps de l'import). Une seule analyse active
@@ -48,7 +55,11 @@ export class AnalysesService {
     const latest = document.analyses[0];
     if (latest && !isTerminalStatus(latest.status)) throw new AppError('ANALYSIS_IN_PROGRESS');
     if (!document.storageKey || document.fileDeletedAt) throw new AppError('FILE_EXPIRED');
-    if (await this.usage.isExhausted()) throw new AppError('AI_BUDGET_EXHAUSTED');
+    // Le budget IA ne concerne que les analyses avec IA : sans IA, l'analyse locale
+    // n'est jamais refusée pour une question de budget.
+    if (this.aiEnabled && (await this.usage.isExhausted())) {
+      throw new AppError('AI_BUDGET_EXHAUSTED');
+    }
     await this.quota.assertCanAnalyze(ownerId, ip);
 
     const analysis = await this.prisma.analysis.create({

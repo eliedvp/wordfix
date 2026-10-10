@@ -69,7 +69,8 @@ test.describe('Parcours principal', () => {
       'Votre fichier est supprimé au plus tard 24 h après l’import.',
       'Le texte extrait et les résultats sont supprimés après 7 jours. Vous pouvez tout supprimer immédiatement.',
       'Vos analyses ne sont accessibles que depuis ce navigateur. Aucun lien public n’est créé.',
-      'Pour l’analyse, le texte de votre document est envoyé à OpenAI.',
+      // Engagement selon le mode IA réel : la pile E2E n'envoie le texte à aucun service.
+      'Votre document n’est envoyé à aucun service d’intelligence artificielle.',
     ]);
   });
 });
