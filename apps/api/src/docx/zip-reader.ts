@@ -40,6 +40,8 @@ export class SafeZip {
   private constructor(
     private readonly zip: ZipFile,
     readonly entries: ReadonlyMap<string, Entry>,
+    /** Toutes les entrées (dossiers compris), dans l'ordre de l'archive. */
+    readonly order: readonly Entry[],
   ) {}
 
   static async open(buffer: Buffer, limits: ZipLimits = DEFAULT_ZIP_LIMITS): Promise<SafeZip> {
@@ -63,6 +65,7 @@ export class SafeZip {
     }
 
     const entries = new Map<string, Entry>();
+    const order: Entry[] = [];
     let total = 0;
 
     await new Promise<void>((resolve, reject) => {
@@ -90,12 +93,13 @@ export class SafeZip {
           return;
         }
         if (!entry.fileName.endsWith('/')) entries.set(entry.fileName, entry);
+        order.push(entry);
         zip.readEntry();
       });
       zip.readEntry();
     });
 
-    return new SafeZip(zip, entries);
+    return new SafeZip(zip, entries, order);
   }
 
   has(name: string): boolean {

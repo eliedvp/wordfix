@@ -22,6 +22,12 @@ export interface RawParagraph {
   renderedBreaksInside: number;
   footnoteRefs: string[];
   endnoteRefs: string[];
+  /**
+   * Nœuds XML lus (paragraphe w:p et runs w:r, indexés par RunAnchor.runIndex). Ils
+   * servent à retrouver, pour l'écriture, exactement les éléments que la lecture a
+   * numérotés. Jamais enregistrés dans le modèle.
+   */
+  xml: { paragraph: XmlNode; runs: XmlNode[] };
 }
 
 export interface WalkStats {
@@ -56,6 +62,8 @@ interface ParagraphState {
   renderedInside: number;
   footnoteRefs: string[];
   endnoteRefs: string[];
+  /** Nœuds w:r lus, dans l'ordre de leur runIndex. */
+  runNodes: XmlNode[];
   /** Pile des champs Word : on ignore les instructions, on garde le résultat affiché. */
   fieldStack: ('instr' | 'result')[];
 }
@@ -136,6 +144,7 @@ export class BodyWalker {
       renderedInside: 0,
       footnoteRefs: [],
       endnoteRefs: [],
+      runNodes: [],
       fieldStack: [],
     };
 
@@ -178,6 +187,7 @@ export class BodyWalker {
       renderedBreaksInside: state.renderedInside,
       footnoteRefs: state.footnoteRefs,
       endnoteRefs: state.endnoteRefs,
+      xml: { paragraph: node, runs: state.runNodes },
     };
   }
 
@@ -201,6 +211,7 @@ export class BodyWalker {
 
   private readRun(run: XmlNode, state: ParagraphState): void {
     const runIndex = state.runIndex++;
+    state.runNodes.push(run);
     const rPr = childByTag(run, 'w:rPr');
     const bold = rPr ? isOn(childByTag(rPr, 'w:b')) : false;
     const hidden = rPr ? isOn(childByTag(rPr, 'w:vanish')) : false;

@@ -1,11 +1,18 @@
 import { type Block, type BlockKind, type DocumentModel, PARSER_VERSION } from '@wordfix/shared';
 import { DocxPackage, PART_LIMITS } from '../package-reader.js';
 import { parseDeclaredPages, plausiblePages } from '../docx-validator.js';
-import { BodyWalker, type RawParagraph } from './body-walker.js';
+import type { RawParagraph, WalkStats } from './body-walker.js';
+import {
+  ENDNOTES_PART,
+  FOOTNOTES_PART,
+  HEADER_FOOTER_PART,
+  type PartWalk,
+  walkPart,
+} from './parts.js';
 import { buildSections } from './sections.js';
 import { StyleMap } from './styles.js';
 import { countWords, splitSentences } from './text.js';
-import { attrOf, childrenOf, findDeep, parseXml, tagOf } from './xml.js';
+import { parseXml } from './xml.js';
 
 const DEFAULT_WORDS_PER_PAGE = 400;
 /** Motif d'un titre numéroté : « 2. », « 2.3 », « II. », « A. ». */
@@ -26,34 +33,41 @@ export async function parseDocx(buffer: Buffer): Promise<DocumentModel> {
       pkg.readPart(pkg.mainPart, PART_LIMITS.mainDocument),
       pkg.readOptionalPart('word/styles.xml', PART_LIMITS.styles),
       pkg.readOptionalPart('docProps/app.xml', PART_LIMITS.docProps),
-      pkg.readOptionalPart('word/footnotes.xml', PART_LIMITS.notes),
-      pkg.readOptionalPart('word/endnotes.xml', PART_LIMITS.notes),
+      pkg.readOptionalPart(FOOTNOTES_PART, PART_LIMITS.notes),
+      pkg.readOptionalPart(ENDNOTES_PART, PART_LIMITS.notes),
     ]);
 
     const styles = StyleMap.parse(stylesXml);
-    const bodyRoot = findDeep(parseXml(documentXml, pkg.mainPart), 'w:body');
-    const bodyWalker = new BodyWalker(pkg.mainPart, 'body');
-    const bodyParagraphs = bodyWalker.walk(bodyRoot ? childrenOf(bodyRoot) : []);
+    const body = walkPart(pkg.mainPart, 'body', parseXml(documentXml, pkg.mainPart));
 
     const headerFooterParagraphs: RawParagraph[] = [];
-    for (const part of pkg.partsMatching(/^word\/(header|footer)\d*\.xml$/)) {
+    for (const part of pkg.partsMatching(HEADER_FOOTER_PART)) {
       const xml = await pkg.readPart(part, PART_LIMITS.headerFooter);
       const kind = part.includes('header') ? 'header' : 'footer';
-      const root = findDeep(parseXml(xml, part), kind === 'header' ? 'w:hdr' : 'w:ftr');
-      headerFooterParagraphs.push(...new BodyWalker(part, kind).walk(root ? childrenOf(root) : []));
+      headerFooterParagraphs.push(...walkPart(part, kind, parseXml(xml, part)).paragraphs);
     }
 
     const builder = new ModelBuilder(styles);
-    builder.addBody(bodyParagraphs);
+    builder.addBody(body.paragraphs);
     builder.inferHeadingsIfNeeded();
-    builder.addNotes(footnotesXml, 'word/footnotes.xml', 'footnote');
-    builder.addNotes(endnotesXml, 'word/endnotes.xml', 'endnote');
+    builder.addNotes(
+      footnotesXml
+        ? walkPart(FOOTNOTES_PART, 'footnotes', parseXml(footnotesXml, FOOTNOTES_PART))
+        : null,
+      'footnote',
+    );
+    builder.addNotes(
+      endnotesXml
+        ? walkPart(ENDNOTES_PART, 'endnotes', parseXml(endnotesXml, ENDNOTES_PART))
+        : null,
+      'endnote',
+    );
     builder.addHeadersFooters(headerFooterParagraphs);
 
     return builder.build({
       declaredPages: parseDeclaredPages(appXml),
       producer: appXml ? (/<Application>([^<]*)<\/Application>/.exec(appXml)?.[1] ?? null) : null,
-      stats: bodyWalker.stats,
+      stats: body.stats,
     });
   } finally {
     pkg.close();
@@ -121,25 +135,17 @@ class ModelBuilder {
     }
   }
 
-  addNotes(xml: string | null, part: string, kind: 'footnote' | 'endnote'): void {
-    if (!xml) return;
-    const root = findDeep(parseXml(xml, part), kind === 'footnote' ? 'w:footnotes' : 'w:endnotes');
+  /** Notes (séparateurs déjà exclus par walkPart), rattachées au paragraphe qui les appelle. */
+  addNotes(walk: PartWalk | null, kind: 'footnote' | 'endnote'): void {
+    if (!walk) return;
     const owners = kind === 'footnote' ? this.footnoteOwners : this.endnoteOwners;
-    const walker = new BodyWalker(part, kind === 'footnote' ? 'footnotes' : 'endnotes');
-
-    for (const note of root ? childrenOf(root) : []) {
-      if (tagOf(note) !== `w:${kind}`) continue;
-      const type = attrOf(note, 'w:type');
-      if (type && type !== 'normal') continue; // séparateurs de notes
-      const id = attrOf(note, 'w:id') ?? '';
-      const owner = this.body.find(({ block }) => block.id === owners.get(id))?.block;
-
-      for (const raw of walker.walk(childrenOf(note))) {
-        if (raw.text.trim().length === 0) continue;
-        const block = this.makeBlock(raw, kind);
-        if (owner) block.noteOf = owner.id;
-        this.extra.push(block);
-      }
+    for (const raw of walk.paragraphs) {
+      if (raw.text.trim().length === 0) continue;
+      const ownerId = owners.get(raw.noteId ?? '');
+      const owner = this.body.find(({ block }) => block.id === ownerId)?.block;
+      const block = this.makeBlock(raw, kind);
+      if (owner) block.noteOf = owner.id;
+      this.extra.push(block);
     }
   }
 
@@ -157,7 +163,7 @@ class ModelBuilder {
   build(input: {
     declaredPages: number | null;
     producer: string | null;
-    stats: BodyWalker['stats'];
+    stats: WalkStats;
   }): DocumentModel {
     const bodyBlocks = this.body.map(({ block }) => block);
     const sections = buildSections(bodyBlocks);
