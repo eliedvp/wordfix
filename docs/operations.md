@@ -26,7 +26,8 @@ L'hébergement de production n'est pas encore choisi (P2). Ce document liste ce 
 
 - `GET /api/health` : 200 si PostgreSQL et Redis répondent, 503 sinon.
 - Logs JSON (pino) : chaque requête porte `requestId` ; le worker journalise `analysisId`, étape, durée et jetons de chaque appel IA. Aucun texte de document.
-- Consommation IA : colonnes `tokensIn` / `tokensOut` de chaque analyse ; plafond quotidien `AI_DAILY_TOKEN_BUDGET`.
+- Mode IA : journalisé au démarrage du worker (« Mode IA : … ») et exposé sans secret par `GET /api/ai-mode`. Par défaut `none` : aucune IA, analyses marquées `AI_DISABLED`.
+- Consommation IA : colonnes `tokensIn` / `tokensOut` de chaque analyse ; plafond quotidien `AI_DAILY_TOKEN_BUDGET` (0 = aucun appel IA autorisé, jamais « illimité »).
 - Log « Nettoyage terminé » toutes les heures (purge).
 - Au démarrage du worker : log « Grammalecte prêt » (version, durée de chargement). Une alerte sur « Grammalecte indisponible » ou « Vérification grammaticale impossible » signale des analyses sans grammaire.
 

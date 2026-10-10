@@ -25,6 +25,8 @@ const backendEnv = {
   API_PORT: String(API_PORT),
   WEB_ORIGIN: `http://localhost:${WEB_PORT}`,
   AI_PROVIDER: 'fake',
+  // Budget explicite : 0 interdirait tout appel IA (même au faux fournisseur de test).
+  AI_DAILY_TOKEN_BUDGET: '5000000',
   STORAGE_DRIVER: 'local',
   STORAGE_LOCAL_DIR: `${process.env.TMPDIR ?? '/tmp'}/wordfix-e2e-storage`,
   RATE_LIMIT_PER_MINUTE: '100000',

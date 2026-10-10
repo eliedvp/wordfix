@@ -6,7 +6,7 @@ import { Info, Lightbulb, TriangleAlert } from 'lucide-react';
 import { useState } from 'react';
 import { ProgressBar } from '@/components/ui/progress-bar';
 import { Ring } from '@/components/ui/score-ring';
-import { scoreSentence, skippedAiCheckText, WARNING_TEXTS } from '@/lib/copy';
+import { scoreScope, scoreSentence, skippedAiCheckText, WARNING_TEXTS } from '@/lib/copy';
 import { formatNumber, formatPages } from '@/lib/format';
 import { NATURE_ORDER, NATURES } from '@/lib/nature';
 import { cn } from '@/lib/utils';
@@ -34,6 +34,11 @@ export function SummaryBand({
   onToggleNature: (nature: IssueNature) => void;
 }) {
   const [showScore, setShowScore] = useState(false);
+  // Analyse sans IA : le dire à côté du score, et en premier dans les avertissements.
+  const aiDisabled = analysis.warnings.includes('AI_DISABLED');
+  const warnings = [...analysis.warnings].sort(
+    (a, b) => Number(b === 'AI_DISABLED') - Number(a === 'AI_DISABLED'),
+  );
   const reviewed =
     analysis.issueCount === 0 ? 100 : (analysis.reviewedCount / analysis.issueCount) * 100;
 
@@ -43,7 +48,7 @@ export function SummaryBand({
         <Ring
           value={analysis.score ?? 0}
           size={104}
-          label={`Score : ${analysis.score ?? 0} sur 100`}
+          label={`${aiDisabled ? 'Score des vérifications automatiques, sans IA' : 'Score'} : ${analysis.score ?? 0} sur 100`}
         >
           <span>
             <span className="font-display text-ink block text-3xl font-bold">{analysis.score}</span>
@@ -51,11 +56,13 @@ export function SummaryBand({
           </span>
         </Ring>
         <div className="max-w-xs">
+          {aiDisabled ? (
+            <p className="mb-1 inline-flex rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-900">
+              Sans IA
+            </p>
+          ) : null}
           <p className="text-ink font-semibold">{scoreSentence(analysis.score ?? 0)}</p>
-          <p className="text-ink-subtle mt-1 text-xs leading-relaxed">
-            Ce score reflète la forme et la cohérence du texte. Il ne juge pas le fond de votre
-            travail.
-          </p>
+          <p className="text-ink-subtle mt-1 text-xs leading-relaxed">{scoreScope(aiDisabled)}</p>
           <button
             type="button"
             onClick={() => setShowScore((v) => !v)}
@@ -141,9 +148,9 @@ export function SummaryBand({
         </p>
       </div>
 
-      {analysis.warnings.length > 0 ? (
+      {warnings.length > 0 ? (
         <ul className="space-y-2 lg:col-span-2">
-          {analysis.warnings.map((warning) => (
+          {warnings.map((warning) => (
             <li
               key={warning}
               className="rounded-control flex items-start gap-2 border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-900"

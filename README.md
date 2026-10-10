@@ -32,7 +32,7 @@ Documentation : [décisions](docs/decisions.md) · [architecture](docs/architect
 
 - **Node.js 22.12 ou plus récent** (voir `.nvmrc`) et **pnpm 10** via Corepack : `corepack enable`
 - **Docker** avec Docker Compose v2
-- Une **clé API OpenAI** pour lancer de vraies analyses
+- Aucune clé d'IA n'est nécessaire : par défaut (`AI_PROVIDER=none`), WordFix analyse avec son moteur local (orthographe, grammaire, règles), sans aucun appel payant. Une clé OpenAI n'est utile que pour activer explicitement l'IA.
 
 ## Démarrage
 
@@ -44,7 +44,9 @@ pnpm install
 # 2. Configuration locale (jamais commitée)
 cp .env.example .env
 #    - changez POSTGRES_PASSWORD (et DATABASE_URL en conséquence)
-#    - renseignez OPENAI_API_KEY
+#    - IA : rien à faire pour fonctionner sans IA (AI_PROVIDER=none, par défaut).
+#      Pour l'activer (appels PAYANTS) : AI_PROVIDER=openai, OPENAI_API_KEY,
+#      AI_PAID_CALLS_ENABLED=true et AI_DAILY_TOKEN_BUDGET > 0.
 
 # 3. PostgreSQL et Redis (attend qu'ils soient prêts)
 pnpm infra:up
@@ -97,5 +99,6 @@ Un seul fichier `.env` à la racine, lu par Docker Compose, l'API, le worker et 
 
 - **Port 5432 ou 6379 déjà pris** : changez `POSTGRES_PORT` / `REDIS_PORT` dans `.env` et mettez à jour `DATABASE_URL` / `REDIS_URL`.
 - **« Configuration invalide »** : le message liste les variables à corriger.
-- **Le worker s'arrête avec « OPENAI_API_KEY est vide »** : renseignez la clé dans `.env`.
+- **« AI_PAID_CALLS_ENABLED » ou « AI_DAILY_TOKEN_BUDGET » au démarrage** : un fournisseur payant (`openai`, `gemini`) est configuré sans activation explicite ou avec un budget à 0. Mettez `AI_PROVIDER=none` pour fonctionner sans IA, ou activez explicitement les appels payants avec un budget strictement positif.
+- **Le worker s'arrête avec « OPENAI_API_KEY est vide »** : avec `AI_PROVIDER=openai`, renseignez la clé dans `.env`.
 - **Les analyses restent « En attente »** : le worker n'est pas lancé (`pnpm dev` le démarre ; sinon `pnpm --filter @wordfix/api dev:worker`).

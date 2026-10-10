@@ -15,7 +15,7 @@ import {
   type AiProvider,
   type TokenUsage,
 } from '../ai/ai-provider.js';
-import { aiModels } from '../ai/models.js';
+import { aiEnabled, aiModels } from '../ai/models.js';
 import { guardAi } from './ai-guard.js';
 import { AiUsageService } from '../ai/usage.service.js';
 import { forEachConcurrent } from '../common/concurrency.js';
@@ -128,8 +128,11 @@ interface VerifyChunkPlan {
 export class AnalysisRunner {
   private readonly logger = new Logger(AnalysisRunner.name);
   private readonly concurrency: number;
-  private readonly modelFast: string;
-  private readonly modelSmart: string;
+  /** Faux en mode sans IA (AI_PROVIDER=none) : aucun appel IA n'est planifié. */
+  private readonly aiEnabled: boolean;
+  /** Modèles utilisés ; null en mode sans IA (rien n'est enregistré sur l'analyse). */
+  private readonly modelFast: string | null;
+  private readonly modelSmart: string | null;
   private readonly grammarEnabled: boolean;
 
   constructor(
@@ -140,9 +143,10 @@ export class AnalysisRunner {
     config: ConfigService<Env, true>,
   ) {
     this.concurrency = config.get('AI_CONCURRENCY', { infer: true });
+    this.aiEnabled = aiEnabled(config);
     const models = aiModels(config);
-    this.modelFast = models.fast;
-    this.modelSmart = models.smart;
+    this.modelFast = models?.fast ?? null;
+    this.modelSmart = models?.smart ?? null;
     this.grammarEnabled = config.get('GRAMMAR_ENGINE', { infer: true }) === 'grammalecte';
   }
 
@@ -167,11 +171,17 @@ export class AnalysisRunner {
         documentId: analysis.documentId,
         model,
         resolver: new LocationResolver(model),
-        modelFast: this.modelFast,
-        modelSmart: this.modelSmart,
+        // Sans IA, aucun morceau IA n'est planifié : ces valeurs ne servent pas.
+        modelFast: this.modelFast ?? 'none',
+        modelSmart: this.modelSmart ?? 'none',
         ai: guardAi(this.ai, { analysisId, logger: this.logger }),
       };
-      if (analysis.chunksTotal === 0) await this.plan(state, warnings);
+      // Déjà planifiée ? Avec IA, il existe toujours au moins un morceau. Sans IA, il n'y en
+      // a aucun : l'avertissement AI_DISABLED, enregistré dans la même transaction que les
+      // résultats du moteur local, sert de repère. Une reprise ne relance donc pas le moteur.
+      const storedWarnings = (analysis.warnings as AnalysisWarning[] | null) ?? [];
+      const planned = analysis.chunksTotal > 0 || storedWarnings.includes('AI_DISABLED');
+      if (!planned) await this.plan(state, warnings);
       this.logger.log({ ...log, stage: 'extract', words: model.meta.wordCount }, 'Document prêt');
 
       await this.transition(analysisId, 'ANALYZING_LOCAL');
@@ -275,11 +285,15 @@ export class AnalysisRunner {
     return { model, warnings };
   }
 
-  /** Planifie tous les appels IA et enregistre les résultats des règles déterministes. */
+  /**
+   * Planifie les appels IA et enregistre les résultats des règles déterministes.
+   * Sans IA (AI_PROVIDER=none) : aucun morceau IA, les cas ambigus gardent leur forme
+   * sans IA, et l'analyse est marquée AI_DISABLED.
+   */
   private async plan(state: RunState, warnings: AnalysisWarning[]): Promise<void> {
-    const local = planLocalChunks(state.model);
-    const context = planContextGroups(state.model);
-    const chunks: Prisma.AnalysisChunkCreateManyInput[] = [
+    const local = this.aiEnabled ? planLocalChunks(state.model) : [];
+    const context = this.aiEnabled ? planContextGroups(state.model) : [];
+    const aiChunks: Prisma.AnalysisChunkCreateManyInput[] = [
       ...local.map((chunk, index) => ({
         id: newId('chk'),
         analysisId: state.analysisId,
@@ -302,6 +316,8 @@ export class AnalysisRunner {
         blockIds: { blocks: [] },
       },
     ];
+    const chunks = this.aiEnabled ? aiChunks : [];
+    if (!this.aiEnabled) warnings = [...warnings, 'AI_DISABLED'];
 
     // Les dictionnaires sont chargés une seule fois par processus (déjà fait au
     // démarrage du worker : cet appel ne fait alors qu'attendre la même instance).
@@ -340,7 +356,8 @@ export class AnalysisRunner {
   ): Promise<{ direct: CandidateIssue[]; chunks: Prisma.AnalysisChunkCreateManyInput[] }> {
     const config = LANGUAGE_ENGINE_CONFIG.ambiguity;
     const { direct, cases } = collectAmbiguities(candidates, state.model, config);
-    const exhausted = cases.length > 0 && (await this.usage.isExhausted());
+    // Sans IA : aucun cas n'est envoyé, et le budget IA n'est même pas consulté.
+    const exhausted = cases.length > 0 && (!this.aiEnabled || (await this.usage.isExhausted()));
     const { batches, overflow } = planBatches(
       cases,
       exhausted ? { maxBatches: 0, maxCasesPerBatch: 1 } : config.ai,
@@ -352,7 +369,8 @@ export class AnalysisRunner {
         sentToAi: cases.length - overflow.length,
         batches: batches.length,
         overBudget: overflow.length,
-        dailyBudgetExhausted: exhausted,
+        aiEnabled: this.aiEnabled,
+        dailyBudgetExhausted: this.aiEnabled && exhausted,
       },
       'Cas ambigus du moteur de langue',
     );

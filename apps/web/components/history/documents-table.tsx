@@ -117,7 +117,7 @@ function DocumentRow({ document }: { document: DocumentDto }) {
         <p className="text-ink-subtle mt-1 text-sm">
           {formatDate(document.createdAt)} · {formatPages(document.estimatedPages)}
           {analysis?.score !== null && analysis?.score !== undefined
-            ? ` · score ${analysis.score}/100`
+            ? ` · score ${analysis.score}/100${analysis.aiDisabled ? ' (sans IA)' : ''}`
             : ''}
           {analysis?.status === 'COMPLETED' && analysis.issueCount > 0
             ? ` · ${analysis.reviewedCount}/${analysis.issueCount} points traités`
