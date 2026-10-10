@@ -36,6 +36,8 @@ L'API et le worker partagent le même code (`infrastructureImports` dans `app.mo
 
 `packages/shared/src/document-model.ts` : sections (arbre, chemin lisible), blocs dans l'ordre de lecture (titre, paragraphe, liste, cellule, légende, sommaire, note, en-tête, pied de page) avec phrases, page estimée et **ancre** vers les runs du XML d'origine — base du futur export `.docx` corrigé par modification ciblée du XML.
 
+Écriture d'un `.docx` existant (socle, pas encore utilisé par l'API) : `docx/writer/rewrite-docx.ts`. Sans modification, les octets d'origine sont renvoyés tels quels. Sinon, seules les parties XML demandées sont réécrites (`docx/writer/xml-writer.ts`, relecture obligatoire de l'arbre produit) ; les autres entrées du paquet sont recopiées à l'identique, dans le même ordre et avec la même compression, puis l'archive produite est relue et vérifiée. Les paragraphes et runs à modifier sont retrouvés par le même parcours que la lecture (`docx/parser/parts.ts`), donc avec les mêmes numéros que les ancres du modèle. Commentaires XML, instructions de traitement, encodages autres que UTF-8 et archives dont deux entrées portent le même nom (à la casse près) sont refusés plutôt que perdus ou modifiés en silence.
+
 ## Moteur et IA
 
 - **Mode IA** (`AI_PROVIDER`) : `none` par défaut, aucune IA. Le worker démarre sans clé, aucun SDK n'est chargé, aucun morceau IA n'est planifié et l'analyse est marquée `AI_DISABLED` (étapes IA « sautées », score présenté comme « sans IA »). `openai`/`gemini` : appels payants, refusés au démarrage sans `AI_PAID_CALLS_ENABLED=true` et `AI_DAILY_TOKEN_BUDGET` > 0. `GET /api/ai-mode` expose le mode, sans secret, pour la page Confidentialité.

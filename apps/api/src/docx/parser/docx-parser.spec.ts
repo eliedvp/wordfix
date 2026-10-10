@@ -136,6 +136,23 @@ describe('parseDocx', () => {
     const model = await parseDocx(patched);
     expect(model.blocks[0]?.text).toBe('Version nouvelle 2026 & fin.');
   });
+
+  it('décode les caractères écrits en références numériques (&#8217; &#xA0;)', async () => {
+    const base = await buildDocx([{ p: 'MARQUEUR' }]);
+    const patched = await patchDocx(base, async (zip) => {
+      const xml = await zip.file('word/document.xml')!.async('string');
+      zip.file(
+        'word/document.xml',
+        xml.replace(
+          /<w:p>(?:(?!<w:p>).)*MARQUEUR(?:(?!<\/w:p>).)*<\/w:p>/s,
+          '<w:p><w:r><w:t xml:space="preserve">L&#8217;eau&#160;: 10&#xA0;% (&amp;#160; reste écrit)</w:t></w:r></w:p>',
+        ),
+      );
+    });
+    const block = (await parseDocx(patched)).blocks[0];
+    expect(block?.text).toBe('L’eau\u00a0: 10\u00a0% (&#160; reste écrit)');
+    expect(block?.anchor.runs).toEqual([{ runIndex: 0, start: 0, end: block?.text.length }]);
+  });
 });
 
 describe('parseWithMammoth (secours)', () => {
