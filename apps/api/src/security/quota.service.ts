@@ -7,6 +7,7 @@ export interface QuotaLimits {
   analysesPerUserPerHour: number;
   analysesPerIpPerDay: number;
   uploadsPerIpPerHour: number;
+  exportsPerUserPerHour: number;
 }
 
 export const QUOTA_LIMITS = Symbol('QUOTA_LIMITS');
@@ -29,6 +30,12 @@ export class QuotaService {
   async consumeUpload(ip: string): Promise<void> {
     const count = await this.increment(`upload:ip:${ip}`, HOUR);
     if (count > this.limits.uploadsPerIpPerHour) throw new AppError('RATE_LIMITED');
+  }
+
+  /** Compte une demande de document corrigé (par session) ; refus au-delà de la limite. */
+  async consumeExport(userId: string): Promise<void> {
+    const count = await this.increment(`export:user:${userId}`, HOUR);
+    if (count > this.limits.exportsPerUserPerHour) throw new AppError('EXPORT_RATE_LIMITED');
   }
 
   /** Vérifie, sans les consommer, les quotas d'analyse. */

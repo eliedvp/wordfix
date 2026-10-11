@@ -4,7 +4,13 @@ import { ConfigService } from '@nestjs/config';
 import { Redis } from 'ioredis';
 import type { Env } from '../config/env.schema.js';
 import { AnalysisQueue } from './analysis.queue.js';
-import { ANALYSIS_QUEUE, MAINTENANCE_QUEUE, QUEUE_PREFIX } from './queue.constants.js';
+import { ExportQueue } from './export.queue.js';
+import {
+  ANALYSIS_QUEUE,
+  EXPORT_QUEUE,
+  MAINTENANCE_QUEUE,
+  QUEUE_PREFIX,
+} from './queue.constants.js';
 
 /**
  * Files BullMQ (Redis). L'API y dépose les jobs ; le worker les consomme.
@@ -23,9 +29,13 @@ import { ANALYSIS_QUEUE, MAINTENANCE_QUEUE, QUEUE_PREFIX } from './queue.constan
         }),
       }),
     }),
-    BullModule.registerQueue({ name: ANALYSIS_QUEUE }, { name: MAINTENANCE_QUEUE }),
+    BullModule.registerQueue(
+      { name: ANALYSIS_QUEUE },
+      { name: MAINTENANCE_QUEUE },
+      { name: EXPORT_QUEUE },
+    ),
   ],
-  providers: [AnalysisQueue],
-  exports: [BullModule, AnalysisQueue],
+  providers: [AnalysisQueue, ExportQueue],
+  exports: [BullModule, AnalysisQueue, ExportQueue],
 })
 export class QueueModule {}

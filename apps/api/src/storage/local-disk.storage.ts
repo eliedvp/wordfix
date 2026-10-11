@@ -20,8 +20,17 @@ export class LocalDiskStorage implements FileStorage {
     return readFile(this.pathFor(key));
   }
 
+  /**
+   * Fichier d'origine : tout le dossier du document (y compris ses documents
+   * corrigés). Document corrigé : ce seul fichier, jamais ceux des autres exports.
+   */
   async delete(key: string): Promise<void> {
-    await rm(dirname(this.pathFor(key)), { recursive: true, force: true });
+    const path = this.pathFor(key);
+    if (key.endsWith('/source.docx')) {
+      await rm(dirname(path), { recursive: true, force: true });
+    } else {
+      await rm(path, { force: true });
+    }
   }
 
   private pathFor(key: string): string {

@@ -57,6 +57,7 @@ model Document {
   contentExpiresAt DateTime
   content          DocumentContent?
   analyses         Analysis[]
+  exports          Export[]
 
   @@index([ownerId, createdAt(sort: Desc)])
   @@index([fileExpiresAt])
@@ -98,6 +99,7 @@ model Analysis {
   canceledAt    DateTime?
   chunks        AnalysisChunk[]
   issues        Issue[]
+  exports       Export[]
 
   @@index([documentId, createdAt(sort: Desc)])
   @@index([status])
@@ -118,22 +120,22 @@ enum AnalysisStatus {
 /// Un appel IA prévu. Permet de reprendre une analyse interrompue sans repayer
 /// les morceaux déjà traités.
 model AnalysisChunk {
-  id         String        @id
+  id         String      @id
   analysisId String
-  analysis   Analysis      @relation(fields: [analysisId], references: [id], onDelete: Cascade)
+  analysis   Analysis    @relation(fields: [analysisId], references: [id], onDelete: Cascade)
   stage      ChunkStage
   index      Int
   /// Identifiants des blocs couverts par ce morceau.
   blockIds   Json
-  status     ChunkStatus   @default(PENDING)
-  attempts   Int           @default(0)
-  tokensIn   Int           @default(0)
-  tokensOut  Int           @default(0)
-  issueCount Int           @default(0)
+  status     ChunkStatus @default(PENDING)
+  attempts   Int         @default(0)
+  tokensIn   Int         @default(0)
+  tokensOut  Int         @default(0)
+  issueCount Int         @default(0)
   /// Résultat intermédiaire réutilisé par l'étape suivante (fiche de section).
   result     Json?
   errorCode  String?
-  updatedAt  DateTime      @updatedAt
+  updatedAt  DateTime    @updatedAt
 
   @@unique([analysisId, stage, index])
 }
@@ -232,4 +234,43 @@ enum IssueSource {
   context
   global
   verify
+}
+
+/// Document corrigé à télécharger (copie de l'original avec les corrections choisies).
+/// Les corrections sont figées à la demande ; le fichier produit expire au plus tard
+/// avec le fichier d'origine (24 h après l'import). L'original n'est jamais modifié.
+model Export {
+  id             String       @id
+  analysisId     String
+  analysis       Analysis     @relation(fields: [analysisId], references: [id], onDelete: Cascade)
+  documentId     String
+  document       Document     @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  status         ExportStatus @default(QUEUED)
+  /// Corrections figées (positions, textes attendus, remplacement), une par point.
+  edits          Json
+  /// Empreinte des corrections : un export valide pour les mêmes est réutilisé.
+  editsHash      String
+  requestedCount Int
+  appliedCount   Int          @default(0)
+  /// Corrections écartées : [{ issueId, reason }].
+  skipped        Json         @default("[]")
+  /// Clé du fichier produit dans le stockage ; null tant qu'il n'existe pas.
+  storageKey     String?
+  errorCode      String?
+  createdAt      DateTime     @default(now())
+  startedAt      DateTime?
+  completedAt    DateTime?
+  expiresAt      DateTime
+
+  @@index([analysisId, createdAt(sort: Desc)])
+  @@index([documentId])
+  @@index([status, createdAt])
+  @@index([expiresAt])
+}
+
+enum ExportStatus {
+  QUEUED
+  RUNNING
+  READY
+  FAILED
 }

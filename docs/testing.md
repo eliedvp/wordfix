@@ -11,6 +11,8 @@ Le MVP n'est pas considéré comme terminé tant que les parcours critiques ci-d
 | E2E             | Playwright         | `pnpm test:e2e`                           | Parcours dans Chromium sur le build de production (site + API + worker)                                                                 |
 | Qualité de l'IA | script             | `pnpm --filter @wordfix/api eval:quality` | Vraie API OpenAI sur des fautes connues : rappel, précision, faux positifs                                                              |
 
+Documents corrigés : `test/exports.e2e-spec.ts` (API, worker d'analyse et service d'export réels ; processus enfant lancé avec `tsx`) : parcours complet, refus explicites, droits, quota, expiration, corrections figées, une tâche à la fois, mémoire et délai dépassés, récupération des exports bloqués, exécution en double sans doublon ni fichier supprimé à tort, fichiers jamais publiés purgés, purge, absence de texte dans les journaux.
+
 Le fournisseur IA `fake` (réponses déterministes) n'existe que pour les tests : la configuration le refuse hors `NODE_ENV=test`. Ce n'est pas une vraie correction. Le mode par défaut `none` (aucune IA) est couvert par `test/ai-none.e2e-spec.ts` : analyse complète sans aucun appel IA, reprise sans relancer le moteur local.
 
 ### Bases dédiées

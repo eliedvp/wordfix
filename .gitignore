@@ -4,6 +4,7 @@ node_modules/
 # Builds
 dist/
 dist-worker/
+dist-export/
 .next/
 out/
 .turbo/

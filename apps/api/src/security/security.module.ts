@@ -35,6 +35,7 @@ import { RedisThrottlerStorage } from './redis-throttler.storage.js';
         analysesPerUserPerHour: config.get('QUOTA_ANALYSES_PER_HOUR', { infer: true }),
         analysesPerIpPerDay: config.get('QUOTA_ANALYSES_PER_IP_PER_DAY', { infer: true }),
         uploadsPerIpPerHour: config.get('QUOTA_UPLOADS_PER_IP_PER_HOUR', { infer: true }),
+        exportsPerUserPerHour: config.get('QUOTA_EXPORTS_PER_HOUR', { infer: true }),
       }),
     },
     { provide: APP_GUARD, useClass: OriginGuard },

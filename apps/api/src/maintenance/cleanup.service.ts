@@ -1,6 +1,8 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
+import type { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
-import { FILE_STORAGE, type FileStorage } from '../storage/file-storage.js';
+import { recoverStaleExports } from '../exports/export-recovery.js';
+import { exportKey, FILE_STORAGE, type FileStorage } from '../storage/file-storage.js';
 
 const BATCH = 100;
 /** Une analyse « active » depuis plus longtemps a perdu son job (Redis vidé, panne). */
@@ -9,6 +11,8 @@ const STALE_ANALYSIS_MS = 2 * 60 * 60 * 1000;
 const GUEST_INACTIVITY_MS = 30 * 24 * 60 * 60 * 1000;
 
 export interface CleanupReport {
+  exportsDeleted: number;
+  staleExports: number;
   filesDeleted: number;
   documentsDeleted: number;
   staleAnalyses: number;
@@ -19,7 +23,9 @@ export interface CleanupReport {
  * Cycle de vie des documents (décision D6), exécuté toutes les heures par le worker :
  * - fichier source supprimé au plus tard 24 h après l'import ;
  * - texte extrait, analyses et résultats supprimés après 7 jours (document entier) ;
- * - analyses bloquées marquées en échec, sessions invitées inactives oubliées.
+ * - analyses bloquées marquées en échec, sessions invitées inactives oubliées ;
+ * - documents corrigés (exports) supprimés à leur expiration (au plus tard avec le
+ *   fichier d'origine) ou avec leur document ; exports bloqués marqués en échec.
  */
 @Injectable()
 export class CleanupService {
@@ -32,11 +38,25 @@ export class CleanupService {
 
   async run(now = new Date()): Promise<CleanupReport> {
     const report: CleanupReport = {
+      exportsDeleted: 0,
+      staleExports: 0,
       filesDeleted: 0,
       documentsDeleted: 0,
       staleAnalyses: 0,
       guestsDeleted: 0,
     };
+
+    // 0. Documents corrigés expirés, ou dont le document ou le fichier d'origine va
+    //    disparaître : fichier produit puis export supprimés.
+    report.exportsDeleted = await this.deleteExports({
+      OR: [
+        { expiresAt: { lte: now } },
+        { document: { contentExpiresAt: { lte: now } } },
+        { document: { fileExpiresAt: { lte: now } } },
+        { document: { fileDeletedAt: { not: null } } },
+      ],
+    });
+    report.staleExports = await recoverStaleExports(this.prisma, now);
 
     // 1. Documents arrivés au bout de la conservation : tout est supprimé.
     for (;;) {
@@ -104,5 +124,25 @@ export class CleanupService {
 
     this.logger.log(report, 'Nettoyage terminé');
     return report;
+  }
+
+  /** Supprime des exports et leurs fichiers produits (par lots). */
+  private async deleteExports(where: Prisma.ExportWhereInput): Promise<number> {
+    let deleted = 0;
+    for (;;) {
+      const batch = await this.prisma.export.findMany({
+        where,
+        select: { id: true, documentId: true },
+        take: BATCH,
+      });
+      if (batch.length === 0) return deleted;
+      // Clé déterministe : supprime aussi un fichier produit mais jamais publié
+      // (service arrêté avant READY, export déclaré en échec pendant son calcul).
+      for (const row of batch) await this.storage.delete(exportKey(row.documentId, row.id));
+      const { count } = await this.prisma.export.deleteMany({
+        where: { id: { in: batch.map((row) => row.id) } },
+      });
+      deleted += count;
+    }
   }
 }

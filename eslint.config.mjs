@@ -11,6 +11,7 @@ export default tseslint.config(
       '**/node_modules/**',
       '**/dist/**',
       '**/dist-worker/**',
+      '**/dist-export/**',
       '**/.next/**',
       '**/.turbo/**',
       '**/coverage/**',

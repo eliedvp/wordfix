@@ -14,7 +14,8 @@ export interface FileStorage {
 
 export const FILE_STORAGE = Symbol('FILE_STORAGE');
 
-const KEY_PATTERN = /^documents\/doc_[0-9a-z]{20}\/source\.docx$/;
+const KEY_PATTERN =
+  /^documents\/doc_[0-9a-z]{20}\/(?:source\.docx|exports\/exp_[0-9a-z]{20}\.docx)$/;
 
 /**
  * Clé de stockage d'un document. Le nom choisi par l'utilisateur n'entre jamais
@@ -23,6 +24,14 @@ const KEY_PATTERN = /^documents\/doc_[0-9a-z]{20}\/source\.docx$/;
 export function sourceKey(documentId: string): string {
   if (!isId('doc', documentId)) throw new Error('Identifiant de document invalide');
   return `documents/${documentId}/source.docx`;
+}
+
+/** Clé du document corrigé d'un export (jamais celle de l'original). */
+export function exportKey(documentId: string, exportId: string): string {
+  if (!isId('doc', documentId) || !isId('exp', exportId)) {
+    throw new Error("Identifiant d'export invalide");
+  }
+  return `documents/${documentId}/exports/${exportId}.docx`;
 }
 
 export function assertValidKey(key: string): void {

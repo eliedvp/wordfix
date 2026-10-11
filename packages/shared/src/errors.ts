@@ -83,6 +83,42 @@ export const ERROR_CATALOG = {
     status: 500,
     message: "L'analyse n'a pas pu aboutir. Vous pouvez la relancer.",
   },
+  EXPORT_NOTHING_TO_APPLY: {
+    status: 422,
+    message:
+      'Aucune correction acceptée ou modifiée : acceptez ou modifiez au moins un point avant de télécharger le document corrigé.',
+  },
+  EXPORT_NO_APPLICABLE: {
+    status: 422,
+    message:
+      "Aucune des corrections choisies n'a pu être appliquée sans risque au fichier Word : aucun document corrigé n'a été produit.",
+  },
+  EXPORT_TOO_LARGE: {
+    status: 422,
+    message:
+      'Ce document est trop volumineux ou trop complexe pour produire une version corrigée. Votre fichier d’origine est intact.',
+  },
+  EXPORT_TIMEOUT: {
+    status: 422,
+    message:
+      'La production du document corrigé a pris trop de temps et a été interrompue. Votre fichier d’origine est intact.',
+  },
+  EXPORT_FAILED: {
+    status: 500,
+    message: "Le document corrigé n'a pas pu être produit. Votre fichier d’origine est intact.",
+  },
+  EXPORT_NOT_READY: {
+    status: 409,
+    message: "Le document corrigé n'est pas encore prêt.",
+  },
+  EXPORT_EXPIRED: {
+    status: 410,
+    message: "Le document corrigé n'est plus disponible (conservation de 24 h après l'import).",
+  },
+  EXPORT_RATE_LIMITED: {
+    status: 429,
+    message: 'Vous avez atteint la limite de documents corrigés. Réessayez un peu plus tard.',
+  },
   VALIDATION_FAILED: { status: 400, message: 'La requête contient des valeurs invalides.' },
   FORBIDDEN_ORIGIN: { status: 403, message: 'Requête refusée.' },
   NOT_FOUND: { status: 404, message: "Cet élément n'existe pas ou n'est plus disponible." },
