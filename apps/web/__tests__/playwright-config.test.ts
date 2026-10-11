@@ -2,7 +2,7 @@
 import { readFileSync } from 'node:fs';
 import type { PlaywrightTestConfig } from '@playwright/test';
 import { describe, expect, it } from 'vitest';
-import config, { WORKER_READY } from '../playwright.config';
+import config, { EXPORT_WORKER_READY, WORKER_READY } from '../playwright.config';
 
 /**
  * Serveurs des tests E2E : API et worker démarrés par Playwright, sans shell POSIX,
@@ -38,5 +38,16 @@ describe('Configuration Playwright (serveurs E2E multiplateformes)', () => {
     expect(worker?.wait?.stdout).toBe(WORKER_READY);
     const source = readFileSync(new URL('../../api/src/worker.ts', import.meta.url), 'utf8');
     expect(source).toMatch(WORKER_READY);
+  });
+
+  it('le service d’export est lancé à part, avec la même configuration, et attendu sur son vrai message', () => {
+    const api = byName('API');
+    const exporter = byName('Export');
+    expect(exporter).toMatchObject({ command: 'node dist/export-worker.js', cwd: '../api' });
+    expect({ ...exporter?.env, LOG_LEVEL: '-' }).toEqual({ ...api?.env, LOG_LEVEL: '-' });
+    expect(exporter?.env?.LOG_LEVEL).toBe('info');
+    expect(exporter?.wait?.stdout).toBe(EXPORT_WORKER_READY);
+    const source = readFileSync(new URL('../../api/src/export-worker.ts', import.meta.url), 'utf8');
+    expect(source).toMatch(EXPORT_WORKER_READY);
   });
 });

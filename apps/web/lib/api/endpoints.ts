@@ -1,6 +1,7 @@
 import type {
   AnalysisDto,
   DocumentDto,
+  ExportDto,
   IssueListDto,
   IssueStatus,
   UpdatedIssueDto,
@@ -23,7 +24,58 @@ export const api = {
       method: 'PATCH',
       ...jsonBody(userText === undefined ? { status } : { status, userText }),
     }),
+  /** Demande d'un document corrigé (corrections acceptées ou modifiées, figées). */
+  createExport: (analysisId: string) =>
+    apiFetch<ExportDto>(`/analyses/${analysisId}/exports`, { method: 'POST' }),
+  getExport: (id: string) => apiFetch<ExportDto>(`/exports/${id}`),
+  downloadExport: (id: string) => downloadExport(id),
 };
+
+export interface DownloadedFile {
+  blob: Blob;
+  fileName: string;
+}
+
+/** Nom du fichier annoncé par Content-Disposition (forme UTF-8 en priorité). */
+export function fileNameFromDisposition(header: string | null): string | null {
+  if (!header) return null;
+  const encoded = /filename\*=UTF-8''([^;]+)/i.exec(header)?.[1];
+  if (encoded) {
+    try {
+      return decodeURIComponent(encoded.trim());
+    } catch {
+      // Encodage invalide : on retombe sur la forme simple.
+    }
+  }
+  return /filename="([^"]+)"/i.exec(header)?.[1] ?? null;
+}
+
+/**
+ * Téléchargement du document corrigé. Le fichier vient toujours de la route d'export
+ * (jamais du fichier d'origine). Lu en mémoire avant d'être proposé à l'enregistrement :
+ * une erreur (export expiré, pas prêt) s'affiche comme un message, pas comme une page JSON.
+ */
+async function downloadExport(id: string): Promise<DownloadedFile> {
+  let response: Response;
+  try {
+    response = await fetch(`/api/exports/${id}/download`, { credentials: 'same-origin' });
+  } catch {
+    throw new ApiError('NETWORK_ERROR', NETWORK_MESSAGE, 0);
+  }
+  if (!response.ok) throw await parseError(response);
+  let blob: Blob;
+  try {
+    blob = await response.blob();
+  } catch {
+    throw new ApiError('NETWORK_ERROR', NETWORK_MESSAGE, 0);
+  }
+  return {
+    blob,
+    fileName:
+      fileNameFromDisposition(response.headers.get('Content-Disposition')) ??
+      'Document (corrigé).docx',
+  };
+}
 
 export interface UploadHandle {
   promise: Promise<DocumentDto>;

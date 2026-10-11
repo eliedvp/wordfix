@@ -3,7 +3,7 @@ import { e2eDatabaseUrl } from './e2e/database-url.mjs';
 
 /**
  * Tests de bout en bout dans un vrai navigateur, sur le build de production :
- * site Next.js + API + worker (fournisseur IA de test) + PostgreSQL + Redis.
+ * site Next.js + API + worker (fournisseur IA de test) + service d'export + PostgreSQL + Redis.
  * Ports et bases dédiés : ils ne touchent pas à l'environnement de développement.
  * Prérequis : `pnpm build`, PostgreSQL et Redis démarrés (`pnpm infra:up`).
  */
@@ -16,6 +16,8 @@ const DATABASE_URL = e2eDatabaseUrl();
 const REDIS_URL = process.env.E2E_REDIS_URL ?? 'redis://127.0.0.1:6379/14';
 /** Message du worker une fois prêt à consommer la file (apps/api/src/worker.ts). */
 export const WORKER_READY = /Worker WordFix démarré/;
+/** Message du service d'export une fois prêt (apps/api/src/export-worker.ts). */
+export const EXPORT_WORKER_READY = /Service d’export WordFix démarré/;
 
 const backendEnv = {
   NODE_ENV: 'test',
@@ -80,6 +82,16 @@ export default defineConfig({
       // Le worker n'écoute sur aucun port : il est prêt quand il l'annonce dans ses logs.
       env: { ...backendEnv, LOG_LEVEL: 'info' },
       wait: { stdout: WORKER_READY },
+      reuseExistingServer: false,
+      timeout: 60_000,
+    },
+    {
+      // Service d'export (documents corrigés) : processus séparé, comme en production.
+      name: 'Export',
+      command: 'node dist/export-worker.js',
+      cwd: '../api',
+      env: { ...backendEnv, LOG_LEVEL: 'info' },
+      wait: { stdout: EXPORT_WORKER_READY },
       reuseExistingServer: false,
       timeout: 60_000,
     },
