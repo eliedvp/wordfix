@@ -2,7 +2,12 @@ import { createHash } from 'node:crypto';
 import type { Entry } from 'yauzl';
 import { ZipFile } from 'yazl';
 import { DocxPackage, PART_LIMITS } from '../package-reader.js';
-import { partKindOf, type WalkedParagraph, walkPart } from '../parser/parts.js';
+import {
+  partKindOf,
+  type WalkedPartKind,
+  type WalkedParagraph,
+  walkPart,
+} from '../parser/parts.js';
 import { SafeZip } from '../zip-reader.js';
 import { readEditableXml, writeEditableXml } from './xml-writer.js';
 import type { XmlNode } from '../parser/xml.js';
@@ -19,6 +24,8 @@ import type { XmlNode } from '../parser/xml.js';
 
 export interface PartEditContext {
   part: string;
+  /** Nature de la partie (corps, en-tête, notes…), ou null pour une partie sans texte lu. */
+  kind: WalkedPartKind | null;
   /**
    * Paragraphes de la partie, indexés comme BlockAnchor.paragraphIndex (même
    * parcours que la lecture). Vide pour une partie sans texte lu (styles…).
@@ -31,6 +38,11 @@ export interface PartEdit {
   part: string;
   /** Modifie l'arbre en place ; renvoie true seulement s'il a été modifié. */
   apply: (tree: XmlNode[], context: PartEditContext) => boolean;
+  /**
+   * Contrôle facultatif de la partie réécrite, sur l'arbre relu depuis le XML produit
+   * (sans nouvelle analyse). Une exception annule toute la réécriture : aucun fichier.
+   */
+  verify?: (reread: XmlNode[], context: PartEditContext) => void;
 }
 
 export interface RewriteResult {
@@ -70,18 +82,23 @@ export async function rewriteDocx(
       if (!XML_PART.test(part)) {
         throw new DocxRewriteError('not_xml_part', `partie non XML : ${part}`);
       }
-      const editable = readEditableXml(await pkg.readPart(part, PART_LIMITS.mainDocument), part);
       const kind = partKindOf(part, pkg.mainPart);
+      const editable = readEditableXml(await pkg.readPart(part, partLimit(part, kind)), part);
       const paragraphs = new Map<number, WalkedParagraph>(
         kind
           ? walkPart(part, kind, editable.tree).paragraphs.map((p) => [p.paragraphIndex, p])
           : [],
       );
+      const context: PartEditContext = { part, kind, paragraphs };
+      const partEdits = edits.filter((edit) => edit.part === part);
       let changed = false;
-      for (const edit of edits) {
-        if (edit.part === part && edit.apply(editable.tree, { part, paragraphs })) changed = true;
+      for (const edit of partEdits) {
+        if (edit.apply(editable.tree, context)) changed = true;
       }
-      if (changed) rewritten.set(part, Buffer.from(writeEditableXml(editable), 'utf8'));
+      if (!changed) continue;
+      const written = writeEditableXml(editable);
+      for (const edit of partEdits) edit.verify?.(written.reread, context);
+      rewritten.set(part, Buffer.from(written.xml, 'utf8'));
     }
 
     if (rewritten.size === 0) return { buffer: source, changedParts: [] };
@@ -90,6 +107,25 @@ export async function rewriteDocx(
     return { buffer, changedParts: [...rewritten.keys()] };
   } finally {
     pkg.close();
+  }
+}
+
+/** Plafond de lecture d'une partie : le même que pour la lecture du document. */
+function partLimit(part: string, kind: WalkedPartKind | null): number {
+  switch (kind) {
+    case 'body':
+      return PART_LIMITS.mainDocument;
+    case 'header':
+    case 'footer':
+      return PART_LIMITS.headerFooter;
+    case 'footnotes':
+    case 'endnotes':
+      return PART_LIMITS.notes;
+    default:
+      if (part === '[Content_Types].xml') return PART_LIMITS.contentTypes;
+      if (part.endsWith('.rels')) return PART_LIMITS.rels;
+      if (part.startsWith('docProps/')) return PART_LIMITS.docProps;
+      return PART_LIMITS.styles;
   }
 }
 

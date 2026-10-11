@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { XMLBuilder } from 'fast-xml-parser';
 import { parseXml, XML_OPTIONS, type XmlNode } from '../parser/xml.js';
 
@@ -82,18 +83,99 @@ export function readEditableXml(xml: string, part: string): EditableXml {
   return { part, tree: parseXml(xml, part), prolog };
 }
 
+export interface WrittenXml {
+  xml: string;
+  /** Arbre relu depuis le XML produit (identique à l'arbre écrit, vérifié). */
+  reread: XmlNode[];
+}
+
 /**
- * Réécrit l'arbre. Le résultat est relu et doit redonner exactement le même arbre :
- * sinon la sérialisation aurait altéré le contenu et la partie est refusée.
+ * Réécrit l'arbre. Le résultat est relu et doit redonner exactement le même arbre
+ * (comparaison directe, sans copie intermédiaire) : sinon la sérialisation aurait
+ * altéré le contenu et la partie est refusée. L'arbre relu est renvoyé pour que
+ * l'appelant vérifie le texte sans analyser la partie une fois de plus.
  */
-export function writeEditableXml({ part, tree, prolog }: EditableXml): string {
+export function writeEditableXml({ part, tree, prolog }: EditableXml): WrittenXml {
   const body: string = builder.build(tree);
   if (hasInvalidXmlChar(body)) {
     throw new XmlRewriteError('invalid_output', `caractère interdit en XML : ${part}`);
   }
   const xml = prolog + body;
-  if (JSON.stringify(parseXml(xml, part)) !== JSON.stringify(tree)) {
+  const reread = parseXml(xml, part);
+  if (!sameXml(reread, tree)) {
     throw new XmlRewriteError('invalid_output', `réécriture non fidèle : ${part}`);
   }
-  return xml;
+  return { xml, reread };
+}
+
+/** Égalité stricte de deux arbres (balises, attributs dans l'ordre, textes), sans récursion. */
+export function sameXml(a: XmlNode[], b: XmlNode[]): boolean {
+  const stack: [XmlNode[], XmlNode[]][] = [[a, b]];
+  while (stack.length > 0) {
+    const [left, right] = stack.pop()!;
+    if (left.length !== right.length) return false;
+    for (let i = 0; i < left.length; i++) {
+      const x = left[i]!;
+      const y = right[i]!;
+      const keysX = Object.keys(x);
+      const keysY = Object.keys(y);
+      if (keysX.length !== keysY.length) return false;
+      for (let k = 0; k < keysX.length; k++) {
+        const key = keysX[k]!;
+        if (key !== keysY[k]) return false;
+        const vx = x[key];
+        const vy = y[key];
+        if (key === ':@') {
+          if (!sameAttributes(vx, vy)) return false;
+        } else if (Array.isArray(vx)) {
+          if (!Array.isArray(vy)) return false;
+          stack.push([vx as XmlNode[], vy as XmlNode[]]);
+        } else if (vx !== vy) {
+          return false;
+        }
+      }
+    }
+  }
+  return true;
+}
+
+function sameAttributes(x: unknown, y: unknown): boolean {
+  const ax = x as Record<string, unknown>;
+  const ay = y as Record<string, unknown>;
+  const kx = Object.keys(ax);
+  const ky = Object.keys(ay);
+  return kx.length === ky.length && kx.every((key, i) => key === ky[i] && ax[key] === ay[key]);
+}
+
+/**
+ * Empreinte d'un élément et de tout son contenu. Avec `skeletonOnly`, le texte des
+ * w:t et leur attribut xml:space sont ignorés : deux paragraphes de même empreinte
+ * ne diffèrent alors que par ce texte (structure, runs et mise en forme identiques).
+ */
+export function xmlFingerprint(node: XmlNode, skeletonOnly = false): string {
+  const hash = createHash('sha256');
+  const stack: (XmlNode | string)[] = [node];
+  while (stack.length > 0) {
+    const item = stack.pop()!;
+    if (typeof item === 'string') {
+      hash.update(item);
+      continue;
+    }
+    for (const [key, value] of Object.entries(item)) {
+      if (key === ':@') {
+        for (const [name, attr] of Object.entries(value as Record<string, unknown>)) {
+          if (skeletonOnly && name === 'xml:space' && 'w:t' in item) continue;
+          hash.update(`@${name}=${JSON.stringify(attr)}\u0000`);
+        }
+      } else if (Array.isArray(value)) {
+        hash.update(`<${key}\u0000`);
+        stack.push(`>${key}\u0000`);
+        if (skeletonOnly && key === 'w:t') continue;
+        for (let i = value.length - 1; i >= 0; i--) stack.push(value[i] as XmlNode);
+      } else {
+        hash.update(`#${key}=${JSON.stringify(value)}\u0000`);
+      }
+    }
+  }
+  return hash.digest('hex');
 }
