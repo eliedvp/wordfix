@@ -4,13 +4,22 @@ Ce document décrit le code tel qu'il est. Les choix et leurs raisons sont dans 
 
 ## Processus
 
-| Processus | Point d'entrée            | Rôle                                                                      |
-| --------- | ------------------------- | ------------------------------------------------------------------------- |
-| Site      | `apps/web` (`next start`) | Pages, appels `/api/*` relayés vers l'API (réécritures)                   |
-| API       | `apps/api/src/main.ts`    | Import, validation, documents, analyses, décisions ; n'écoute qu'en local |
-| Worker    | `apps/api/src/worker.ts`  | File `analysis` (moteur d'analyse) et file `maintenance` (purge horaire)  |
+| Processus | Point d'entrée                  | Rôle                                                                                    |
+| --------- | ------------------------------- | --------------------------------------------------------------------------------------- |
+| Site      | `apps/web` (`next start`)       | Pages, appels `/api/*` relayés vers l'API (réécritures)                                 |
+| API       | `apps/api/src/main.ts`          | Import, validation, documents, analyses, décisions ; n'écoute qu'en local               |
+| Worker    | `apps/api/src/worker.ts`        | File `analysis` (moteur d'analyse) et file `maintenance` (purge horaire)                |
+| Export    | `apps/api/src/export-worker.ts` | File `export` (documents corrigés), une tâche à la fois, un processus enfant par export |
 
 L'API et le worker partagent le même code (`infrastructureImports` dans `app.module.ts`) mais tournent séparément : une analyse longue ne bloque jamais une requête HTTP, et un arrêt du worker n'arrête pas le site.
+
+## Document corrigé (export)
+
+1. `POST /api/analyses/:id/exports` (API) : propriété vérifiée, quota (`QUOTA_EXPORTS_PER_HOUR`, 10 par session et par heure), analyse terminée, fichier d'origine présent. Les corrections sont **figées** : points `accepted` (suggestion) et `edited` (texte de l'utilisateur), avec positions et texte du paragraphe tel qu'analysé. Aucun point : `EXPORT_NOTHING_TO_APPLY`, aucun export. Mêmes corrections qu'un export encore valide : celui-ci est renvoyé. Expiration = celle du fichier d'origine (24 h après l'import au plus).
+2. Service d'export (`export-worker.ts`, processus séparé du worker d'analyse) : file `export`, **une tâche à la fois**. Chaque export s'exécute dans un **processus enfant éphémère** (`exports/export-child.ts`) qui applique `applyTextEdits` à une copie de l'original ; l'original n'est jamais modifié. Fichier produit : `documents/{id}/exports/{exportId}.docx`.
+3. Aucune correction applicable : export `FAILED` (`EXPORT_NO_APPLICABLE`) avec les motifs, aucun fichier (jamais l'original à sa place). Mémoire dépassée (surveillance, tas, arrêt par le noyau) : `EXPORT_TOO_LARGE`. Délai dépassé : `EXPORT_TIMEOUT`. Panne inattendue (lancement, échange avec l'enfant, sortie anormale, vérification finale) : `EXPORT_FAILED`. `READY` n'est posé qu'après réception du message complet de l'enfant (fichier déjà relu et vérifié) **et** enregistrement réussi du fichier.
+4. `GET /api/exports/:id` (état, compte rendu) ; `GET /api/exports/:id/download` (pièce jointe « Nom (corrigé).docx », jamais mise en cache, refusée après expiration).
+5. Exports bloqués depuis plus de 15 min : marqués en échec par le service d'export (au démarrage puis toutes les 5 min) et par la purge horaire. Reprise sans doublon : une même ligne d'export, une clé de fichier déterministe ; une exécution en double ne supprime jamais un fichier déjà publié. Fichiers produits supprimés (par leur clé déterministe, y compris un fichier jamais publié) à expiration, avec leur document ou son fichier d'origine.
 
 ## Parcours d'une analyse
 

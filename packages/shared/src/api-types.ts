@@ -196,3 +196,43 @@ export type AiMode = 'none' | 'openai' | 'gemini' | 'fake';
 export interface AiModeDto {
   mode: AiMode;
 }
+
+/** État d'un document corrigé (export). */
+export type ExportStatus = 'QUEUED' | 'RUNNING' | 'READY' | 'FAILED';
+
+/** Motif pour lequel une correction choisie n'a pas été appliquée au fichier Word. */
+export type ExportSkipReason =
+  | 'block_not_found'
+  | 'block_changed'
+  | 'original_mismatch'
+  | 'invalid_range'
+  | 'unsupported_block'
+  | 'invalid_replacement'
+  | 'overlap'
+  | 'not_plain_text'
+  | 'field'
+  | 'content_control'
+  | 'tracked_change'
+  | 'format_boundary'
+  | 'non_adjacent'
+  | 'anchor_mismatch'
+  | 'repeated_header_footer';
+
+/**
+ * Document corrigé. Les corrections (points acceptés ou modifiés) sont figées à la
+ * demande ; le fichier produit expire au plus tard avec le fichier d'origine.
+ */
+export interface ExportDto {
+  id: string;
+  analysisId: string;
+  status: ExportStatus;
+  /** Corrections demandées (figées à la création). */
+  requestedCount: number;
+  /** Corrections appliquées (renseigné une fois l'export terminé). */
+  appliedCount: number;
+  skipped: { issueId: string; reason: ExportSkipReason }[];
+  errorCode: ErrorCode | null;
+  createdAt: string;
+  completedAt: string | null;
+  expiresAt: string;
+}

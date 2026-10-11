@@ -3,6 +3,7 @@ import { Test } from '@nestjs/testing';
 import { AppModule } from '../src/app.module.js';
 import { configureApp } from '../src/app.setup.js';
 import { PrismaService } from '../src/prisma/prisma.service.js';
+import { ExportWorkerModule } from '../src/export-worker.module.js';
 import { WorkerModule } from '../src/worker.module.js';
 
 /** Démarre l'API complète (mêmes modules et même configuration que la production). */
@@ -38,7 +39,7 @@ export async function createTestWorker(
 export async function resetDatabase(app: INestApplicationContext): Promise<void> {
   const prisma = app.get(PrismaService);
   await prisma.$executeRawUnsafe(
-    'TRUNCATE "Issue", "AnalysisChunk", "Analysis", "DocumentContent", "Document", "User" CASCADE',
+    'TRUNCATE "Export", "Issue", "AnalysisChunk", "Analysis", "DocumentContent", "Document", "User" CASCADE',
   );
 }
 
@@ -55,4 +56,18 @@ export async function waitFor<T>(
     if (Date.now() > deadline) throw new Error(`Délai dépassé : ${JSON.stringify(value)}`);
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
+}
+
+/** Démarre le service d'export (file `export`, processus enfant par export) dans le processus de test. */
+export async function createTestExportWorker(
+  overrides: { token: unknown; value: unknown }[] = [],
+): Promise<INestApplicationContext> {
+  let builder = Test.createTestingModule({ imports: [ExportWorkerModule] });
+  for (const { token, value } of overrides) {
+    builder = builder.overrideProvider(token).useValue(value);
+  }
+  const worker = await builder.compile();
+  worker.useLogger(false);
+  await worker.init();
+  return worker;
 }

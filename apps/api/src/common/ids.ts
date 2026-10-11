@@ -5,7 +5,7 @@ import { randomBytes } from 'node:crypto';
  * (environ 103 bits d'entropie). Impossibles à deviner, ils ne révèlent ni
  * l'ordre de création ni le nombre d'éléments.
  */
-export type IdPrefix = 'usr' | 'doc' | 'ana' | 'chk' | 'iss';
+export type IdPrefix = 'usr' | 'doc' | 'ana' | 'chk' | 'iss' | 'exp';
 
 const ALPHABET = '0123456789abcdefghijklmnopqrstuvwxyz';
 const ID_LENGTH = 20;

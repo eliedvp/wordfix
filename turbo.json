@@ -37,6 +37,11 @@
       "dependsOn": ["^build", "generate"],
       "cache": false,
       "persistent": true
+    },
+    "dev:export-worker": {
+      "dependsOn": ["^build", "generate"],
+      "cache": false,
+      "persistent": true
     }
   }
 }

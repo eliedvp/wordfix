@@ -13,7 +13,7 @@ import type { Document } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { summarize } from '../analyses/analysis-mapper.js';
 import { AnalysisQueue } from '../queue/analysis.queue.js';
-import { FILE_STORAGE, type FileStorage, sourceKey } from '../storage/file-storage.js';
+import { exportKey, FILE_STORAGE, type FileStorage, sourceKey } from '../storage/file-storage.js';
 
 const HOUR_MS = 60 * 60 * 1000;
 /**
@@ -107,6 +107,15 @@ export class DocumentsService {
     });
     // Les analyses en cours s'arrêtent : le worker ne trouvera plus le document.
     for (const analysis of active) await this.queue.removeIfPending(analysis.id);
+    // Documents corrigés d'abord : leurs fichiers ne doivent pas survivre au document.
+    // Clé déterministe : y compris un fichier produit mais jamais publié.
+    const exports = await this.prisma.export.findMany({
+      where: { documentId: document.id },
+      select: { id: true },
+    });
+    for (const { id: exportId } of exports) {
+      await this.storage.delete(exportKey(document.id, exportId));
+    }
     if (document.storageKey) await this.storage.delete(document.storageKey);
     await this.prisma.document.delete({ where: { id: document.id } });
     this.logger.log({ documentId: id }, 'Document supprimé à la demande');

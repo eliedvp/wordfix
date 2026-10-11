@@ -24,7 +24,12 @@ describe('Sécurité', () => {
     app = await createTestApp([
       {
         token: QUOTA_LIMITS,
-        value: { analysesPerUserPerHour: 1, analysesPerIpPerDay: 1000, uploadsPerIpPerHour: 3 },
+        value: {
+          analysesPerUserPerHour: 1,
+          analysesPerIpPerDay: 1000,
+          uploadsPerIpPerHour: 3,
+          exportsPerUserPerHour: 10,
+        },
       },
     ]);
     redis = new Redis(TEST_REDIS_URL);

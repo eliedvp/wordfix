@@ -28,6 +28,8 @@ export const envSchema = z
     QUOTA_ANALYSES_PER_HOUR: z.coerce.number().int().min(1).default(3),
     QUOTA_ANALYSES_PER_IP_PER_DAY: z.coerce.number().int().min(1).default(10),
     QUOTA_UPLOADS_PER_IP_PER_HOUR: z.coerce.number().int().min(1).default(20),
+    /** Demandes de document corrigé, par session et par heure. */
+    QUOTA_EXPORTS_PER_HOUR: z.coerce.number().int().min(1).default(10),
 
     LOG_LEVEL: z
       .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])
@@ -83,6 +85,16 @@ export const envSchema = z
 
     // Worker d'analyse.
     WORKER_CONCURRENCY: z.coerce.number().int().min(1).max(16).default(2),
+
+    // Service d'export (document corrigé), processus séparé du worker d'analyse.
+    /**
+     * Surveillance applicative : le processus enfant d'un export est arrêté au-delà de
+     * cette mémoire résidente (Linux uniquement). Complément, pas substitut, de la
+     * limite mémoire du conteneur (1,5 Gio recommandés, voir docs/operations.md).
+     */
+    EXPORT_MEMORY_LIMIT_MB: z.coerce.number().int().min(32).max(16_384).default(1280),
+    /** Durée maximale d'un export ; au-delà, le processus enfant est arrêté. */
+    EXPORT_TIMEOUT_MS: z.coerce.number().int().min(100).max(600_000).default(120_000),
 
     // Vérification grammaticale (worker) : Grammalecte, exécuté localement par Python 3.
     GRAMMAR_ENGINE: z.enum(['grammalecte', 'off']).default('grammalecte'),

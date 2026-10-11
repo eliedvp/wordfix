@@ -64,20 +64,20 @@ Ouvrez <http://localhost:3000> et cliquez sur « Essayer avec un rapport de stag
 
 ## Commandes
 
-| Commande                                       | Effet                                                                     |
-| ---------------------------------------------- | ------------------------------------------------------------------------- |
-| `pnpm dev`                                     | `shared` en continu, API (port 4000), worker, site (port 3000)            |
-| `pnpm build`                                   | Compile tous les paquets                                                  |
-| `pnpm check`                                   | Types + lint + formatage (à lancer avant chaque PR)                       |
-| `pnpm test`                                    | Tests unitaires (API, moteur, site)                                       |
-| `pnpm test:integration`                        | API + file + worker + moteur contre PostgreSQL et Redis réels             |
-| `pnpm test:e2e`                                | Parcours complets dans Chromium (après `pnpm build`, API arrêtée)         |
-| `pnpm infra:up` / `pnpm infra:down`            | Démarre / arrête PostgreSQL et Redis                                      |
-| `pnpm db:validate` / `db:check` / `db:deploy`  | Schéma Prisma, connexion à la base, application des migrations            |
-| `pnpm db:migrate`                              | Crée une migration après une modification du schéma (développement)       |
-| `pnpm --filter @wordfix/api fixtures:generate` | Écrit le corpus de test (13 types de documents) dans `apps/api/fixtures/` |
-| `pnpm --filter @wordfix/api eval:quality`      | Mesure la qualité de l'IA réelle sur des fautes connues (stack démarrée)  |
-| `pnpm --filter @wordfix/api sample:generate`   | Régénère le rapport d'exemple de la page d'accueil                        |
+| Commande                                       | Effet                                                                            |
+| ---------------------------------------------- | -------------------------------------------------------------------------------- |
+| `pnpm dev`                                     | `shared` en continu, API (port 4000), worker, service d'export, site (port 3000) |
+| `pnpm build`                                   | Compile tous les paquets                                                         |
+| `pnpm check`                                   | Types + lint + formatage (à lancer avant chaque PR)                              |
+| `pnpm test`                                    | Tests unitaires (API, moteur, site)                                              |
+| `pnpm test:integration`                        | API + file + worker + moteur contre PostgreSQL et Redis réels                    |
+| `pnpm test:e2e`                                | Parcours complets dans Chromium (après `pnpm build`, API arrêtée)                |
+| `pnpm infra:up` / `pnpm infra:down`            | Démarre / arrête PostgreSQL et Redis                                             |
+| `pnpm db:validate` / `db:check` / `db:deploy`  | Schéma Prisma, connexion à la base, application des migrations                   |
+| `pnpm db:migrate`                              | Crée une migration après une modification du schéma (développement)              |
+| `pnpm --filter @wordfix/api fixtures:generate` | Écrit le corpus de test (13 types de documents) dans `apps/api/fixtures/`        |
+| `pnpm --filter @wordfix/api eval:quality`      | Mesure la qualité de l'IA réelle sur des fautes connues (stack démarrée)         |
+| `pnpm --filter @wordfix/api sample:generate`   | Régénère le rapport d'exemple de la page d'accueil                               |
 
 ## Configuration
 
@@ -102,3 +102,4 @@ Un seul fichier `.env` à la racine, lu par Docker Compose, l'API, le worker et 
 - **« AI_PAID_CALLS_ENABLED » ou « AI_DAILY_TOKEN_BUDGET » au démarrage** : un fournisseur payant (`openai`, `gemini`) est configuré sans activation explicite ou avec un budget à 0. Mettez `AI_PROVIDER=none` pour fonctionner sans IA, ou activez explicitement les appels payants avec un budget strictement positif.
 - **Le worker s'arrête avec « OPENAI_API_KEY est vide »** : avec `AI_PROVIDER=openai`, renseignez la clé dans `.env`.
 - **Les analyses restent « En attente »** : le worker n'est pas lancé (`pnpm dev` le démarre ; sinon `pnpm --filter @wordfix/api dev:worker`).
+- **Les documents corrigés restent « en attente »** : le service d'export n'est pas lancé (`pnpm dev` le démarre ; sinon `pnpm --filter @wordfix/api dev:export-worker`).
