@@ -5,6 +5,8 @@ import { defineConfig } from 'vitest/config';
  * - unit : tests rapides, sans base ni Redis (src/**\/*.spec.ts) ;
  * - integration : API complète contre PostgreSQL et Redis réels (test/**\/*.e2e-spec.ts).
  *   Base dédiée, recréée à chaque lancement (voir test/global-setup.ts).
+ * - process : vrais processus enfants d'export, sans base ni Redis
+ *   (test/**\/*.process-spec.ts) ; exécutés aussi sous Windows en CI.
  */
 export default defineConfig({
   test: {
@@ -28,6 +30,17 @@ export default defineConfig({
           fileParallelism: false,
           testTimeout: 30_000,
           hookTimeout: 30_000,
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: 'process',
+          include: ['test/**/*.process-spec.ts'],
+          environment: 'node',
+          // Processus enfants et mesures de durée : un fichier à la fois.
+          fileParallelism: false,
+          testTimeout: 60_000,
         },
       },
     ],

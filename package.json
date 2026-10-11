@@ -22,6 +22,7 @@
     "db:check": "pnpm --filter @wordfix/api db:check",
     "test": "turbo run test",
     "test:integration": "turbo run test:integration",
+    "test:process": "pnpm --filter @wordfix/api test:process",
     "db:migrate": "pnpm --filter @wordfix/api db:migrate",
     "db:deploy": "pnpm --filter @wordfix/api db:deploy",
     "test:e2e": "pnpm --filter @wordfix/web test:e2e"

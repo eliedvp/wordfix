@@ -69,6 +69,9 @@ jobs:
       - name: Tests d'intégration (PostgreSQL + Redis)
         run: pnpm test:integration
 
+      - name: Processus d'export (sans base ni Redis)
+        run: pnpm test:process
+
       - name: Build
         run: pnpm build
 
@@ -84,6 +87,27 @@ jobs:
           name: playwright-report
           path: apps/web/playwright-report
           retention-days: 7
+
+  # Superviseur du processus d'export et protocole parent-enfant sous Windows : vrais
+  # processus enfants, sans base ni Redis (les machines Windows n'acceptent pas les
+  # conteneurs de service). Les tests de contrôle mémoire, propres à Linux (/proc), y
+  # sont ignorés ; le contrôle du rapport refuse tout autre test ignoré ou en échec.
+  export-process-windows:
+    name: Processus d'export sous Windows
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - run: corepack enable
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Paquet partagé
+        run: pnpm --filter @wordfix/shared build
+      - name: Superviseur et protocole parent-enfant (exécutés, ignorés, contrôle du rapport)
+        run: pnpm test:process
 
   # Les étapes du README, exactement : Docker Compose, Prisma, démarrage de l'API.
   infra:
