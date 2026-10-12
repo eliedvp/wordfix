@@ -2,6 +2,7 @@ import {
   ERROR_CATALOG,
   type ErrorCode,
   type ExportDto,
+  type ExportOptions,
   type ExportSkipReason,
   type IssueDto,
 } from '@wordfix/shared';
@@ -36,6 +37,11 @@ export function decisionsSignature(issues: readonly IssueDto[]): string {
     .map((issue) => `${issue.id}\u0000${replacementOf(issue) ?? ''}`)
     .sort()
     .join('\u0001');
+}
+
+/** Empreinte complète d'une demande : corrections choisies et options « Embellir ». */
+export function requestSignature(decisions: string, options: ExportOptions): string {
+  return `${decisions}\u0002t${options.typography ? 1 : 0}l${options.layout ? 1 : 0}`;
 }
 
 export function isActiveExport(dto: ExportDto | undefined): boolean {

@@ -20,6 +20,7 @@ import {
   type ViewFilter,
 } from './filtering';
 import { ExportPanel } from './export-panel';
+import { QuickFix } from './quick-fix';
 import { type IssueAction, IssueDetail } from './issue-detail';
 import { IssueList } from './issue-list';
 import { SummaryBand } from './summary-band';
@@ -236,7 +237,10 @@ export function Workbench({ analysis }: { analysis: AnalysisDto }) {
       />
 
       {issuesQuery.isSuccess ? (
-        <ExportPanel key={analysis.id} analysis={analysis} issues={all} />
+        <>
+          <QuickFix key={`fix-${analysis.id}`} analysisId={analysis.id} issues={all} />
+          <ExportPanel key={analysis.id} analysis={analysis} issues={all} />
+        </>
       ) : null}
 
       <div className="mt-6 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">

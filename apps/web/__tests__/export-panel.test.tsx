@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ExportPanel } from '@/components/results/export-panel';
 import { ApiError } from '@/lib/api/client';
 import { fileNameFromDisposition } from '@/lib/api/endpoints';
-import { decisionsSignature, exportableIssues } from '@/lib/export';
+import { decisionsSignature, exportableIssues, requestSignature } from '@/lib/export';
 
 /**
  * Panneau « Document corrigé » : vrais composants et vrai cache React Query ; seule
@@ -24,6 +24,7 @@ const server = vi.hoisted(() => ({
   sequence: [] as ExportDto[],
   getCalls: 0,
   createCalls: 0,
+  createOptions: [] as unknown[],
   createError: null as ApiError | null,
   getError: null as ApiError | null,
   downloadError: null as ApiError | null,
@@ -49,8 +50,9 @@ vi.mock('@/lib/api/endpoints', async (importOriginal) => {
         if (server.documentError) return Promise.reject(server.documentError);
         return Promise.resolve({ id: 'doc_1', fileAvailable: server.fileAvailable } as DocumentDto);
       },
-      createExport: (): Promise<ExportDto> => {
+      createExport: (_analysisId: string, options?: unknown): Promise<ExportDto> => {
         server.createCalls++;
+        server.createOptions.push(options);
         if (server.createError) return Promise.reject(server.createError);
         return Promise.resolve(server.sequence[0] ?? exportDto('QUEUED'));
       },
@@ -82,6 +84,8 @@ function exportDto(status: ExportDto['status'], fields: Partial<ExportDto> = {})
     appliedCount: status === 'READY' ? 2 : 0,
     skipped: [],
     errorCode: null,
+    options: { typography: false, layout: false },
+    beautified: status === 'READY' ? { typography: 0, layout: 0 } : null,
     createdAt: '2026-10-11T10:00:00.000Z',
     completedAt: status === 'READY' || status === 'FAILED' ? '2026-10-11T10:00:05.000Z' : null,
     expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
@@ -145,6 +149,10 @@ function renderPanel(issues: IssueDto[]) {
   };
 }
 
+/** Empreinte stockée par le panneau pour ces choix, sans option « Embellir ». */
+const signatureOf = (issues: IssueDto[]) =>
+  requestSignature(decisionsSignature(issues), { typography: false, layout: false });
+
 const panel = () => screen.getByRole('region', { name: 'Document corrigé' });
 const downloadButton = () => within(panel()).queryByRole('button', { name: /Télécharger/ });
 
@@ -157,6 +165,7 @@ beforeEach(() => {
     sequence: [],
     getCalls: 0,
     createCalls: 0,
+    createOptions: [],
     createError: null,
     getError: null,
     downloadError: null,
@@ -352,7 +361,7 @@ describe('Panneau « Document corrigé »', () => {
   it('document corrigé expiré : plus de téléchargement proposé', async () => {
     window.sessionStorage.setItem(
       'wordfix.export.ana_1',
-      JSON.stringify({ id: 'exp_1', signature: decisionsSignature(decided()) }),
+      JSON.stringify({ id: 'exp_1', signature: signatureOf(decided()) }),
     );
     server.sequence = [exportDto('READY', { expiresAt: '2026-01-01T00:00:00.000Z' })];
     renderPanel(decided());
@@ -370,7 +379,7 @@ describe('Panneau « Document corrigé »', () => {
   it('après rechargement : l’export suivi est relu, sans nouvelle demande', async () => {
     window.sessionStorage.setItem(
       'wordfix.export.ana_1',
-      JSON.stringify({ id: 'exp_1', signature: decisionsSignature(decided()) }),
+      JSON.stringify({ id: 'exp_1', signature: signatureOf(decided()) }),
     );
     server.sequence = [exportDto('READY')];
     renderPanel(decided());
@@ -394,7 +403,7 @@ describe('Panneau « Document corrigé »', () => {
   const track = () =>
     window.sessionStorage.setItem(
       'wordfix.export.ana_1',
-      JSON.stringify({ id: 'exp_1', signature: decisionsSignature(decided()) }),
+      JSON.stringify({ id: 'exp_1', signature: signatureOf(decided()) }),
     );
 
   it('état de l’export suivi en cours de chargement : aucune nouvelle demande proposée', async () => {
@@ -459,5 +468,58 @@ describe('Panneau « Document corrigé »', () => {
     );
     expect(screen.queryByText(/n’a pas pu être vérifiée/)).toBeNull();
     expect(server.createCalls).toBe(0);
+  });
+
+  it('« Embellir » sans correction choisie : génération possible, options envoyées, compte rendu', async () => {
+    server.sequence = [
+      exportDto('READY', {
+        requestedCount: 0,
+        appliedCount: 0,
+        options: { typography: true, layout: false },
+        beautified: { typography: 3, layout: 0 },
+      }),
+    ];
+    renderPanel([issue('iss_c', 'ignored')]);
+    const button = await screen.findByRole('button', { name: 'Générer le document corrigé' });
+    expect(button).toBeDisabled();
+    await userEvent.click(screen.getByRole('checkbox', { name: /Typographie française/ }));
+    expect(screen.getByText(/seules les améliorations « Embellir » cochées/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Générer le document corrigé' }));
+    expect(server.createOptions).toEqual([{ typography: true, layout: false }]);
+    expect(await screen.findByText('Document embelli prêt.')).toBeInTheDocument();
+    expect(screen.getByText('Embellissement : 3 corrections typographiques.')).toBeInTheDocument();
+    expect(downloadButton()).toBeEnabled();
+  });
+
+  it('« Embellir » sur un document déjà conforme : message clair, aucun téléchargement', async () => {
+    server.sequence = [
+      exportDto('FAILED', {
+        requestedCount: 0,
+        errorCode: 'EXPORT_UNCHANGED',
+        options: { typography: false, layout: true },
+      }),
+    ];
+    renderPanel([]);
+    await userEvent.click(await screen.findByRole('checkbox', { name: /Mise en page harmonisée/ }));
+    await userEvent.click(screen.getByRole('button', { name: 'Générer le document corrigé' }));
+    expect(
+      await screen.findByText(/n'avait besoin d'aucune des améliorations/),
+    ).toBeInTheDocument();
+    expect(downloadButton()).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Réessayer' })).toBeNull();
+  });
+
+  it('option changée après la génération : document signalé comme périmé', async () => {
+    server.sequence = [exportDto('READY')];
+    renderPanel(decided());
+    await userEvent.click(
+      await screen.findByRole('button', { name: 'Générer le document corrigé' }),
+    );
+    await screen.findByText(/Document corrigé prêt/);
+    await userEvent.click(screen.getByRole('checkbox', { name: /Mise en page harmonisée/ }));
+    expect(
+      await screen.findByText(/Vos choix ont changé depuis la génération/),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Générer une nouvelle version' })).toBeEnabled();
   });
 });

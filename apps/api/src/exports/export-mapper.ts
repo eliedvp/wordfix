@@ -1,4 +1,4 @@
-import type { ExportDto, ExportSkipReason } from '@wordfix/shared';
+import type { ExportDto, ExportOptions, ExportSkipReason } from '@wordfix/shared';
 import { isErrorCode } from '@wordfix/shared';
 import type { Export } from '../generated/prisma/client.js';
 import type { TextEdit } from '../docx/writer/text-edits.js';
@@ -15,9 +15,26 @@ export function toExportDto(row: Export): ExportDto {
     appliedCount: row.appliedCount,
     skipped: row.skipped as { issueId: string; reason: ExportSkipReason }[],
     errorCode: isErrorCode(row.errorCode) ? row.errorCode : row.errorCode ? 'EXPORT_FAILED' : null,
+    options: exportOptionsOf(row.options),
+    beautified: beautifiedOf(row.beautified),
     createdAt: row.createdAt.toISOString(),
     completedAt: row.completedAt?.toISOString() ?? null,
     expiresAt: row.expiresAt.toISOString(),
+  };
+}
+
+/** Options enregistrées (une ligne antérieure aux options vaut « corrections seules »). */
+export function exportOptionsOf(value: unknown): ExportOptions {
+  const options = (value ?? {}) as Partial<ExportOptions>;
+  return { typography: options.typography === true, layout: options.layout === true };
+}
+
+function beautifiedOf(value: unknown): ExportDto['beautified'] {
+  if (!value || typeof value !== 'object') return null;
+  const counts = value as { typography?: unknown; layout?: unknown };
+  return {
+    typography: typeof counts.typography === 'number' ? counts.typography : 0,
+    layout: typeof counts.layout === 'number' ? counts.layout : 0,
   };
 }
 

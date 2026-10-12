@@ -1,6 +1,6 @@
 # Exploitation — WordFix
 
-L'hébergement de production n'est pas encore choisi (P2). Ce document liste ce dont WordFix a besoin, quel que soit l'hébergeur.
+L'hébergement de production n'est pas encore choisi (P2). Ce document liste ce dont WordFix a besoin, quel que soit l'hébergeur. Variables, procédure de mise en ligne et vérifications obligatoires : [`deployment.md`](deployment.md).
 
 ## Processus à faire tourner
 

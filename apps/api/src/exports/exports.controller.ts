@@ -1,4 +1,5 @@
 import {
+  Body,
   Controller,
   Get,
   HttpCode,
@@ -13,6 +14,7 @@ import type { Request } from 'express';
 import { AppError } from '../common/errors/app-error.js';
 import { ParseIdPipe } from '../common/pipes/parse-id.pipe.js';
 import { SessionService } from '../session/session.service.js';
+import { CreateExportDto } from './dto/create-export.dto.js';
 import { attachmentDisposition } from './export-mapper.js';
 import { ExportsService } from './exports.service.js';
 
@@ -31,14 +33,21 @@ export class ExportsController {
     return user.id;
   }
 
-  /** Demande d'un document corrigé : corrections figées, traitement en arrière-plan (202). */
+  /**
+   * Demande d'un document corrigé : corrections figées et options « Embellir »,
+   * traitement en arrière-plan (202).
+   */
   @Post('analyses/:id/exports')
   @HttpCode(HttpStatus.ACCEPTED)
   async create(
     @Param('id', new ParseIdPipe('ana')) analysisId: string,
+    @Body() body: CreateExportDto,
     @Req() req: Request,
   ): Promise<ExportDto> {
-    return this.exports.create(await this.userId(req), analysisId);
+    return this.exports.create(await this.userId(req), analysisId, {
+      typography: body?.typography === true,
+      layout: body?.layout === true,
+    });
   }
 
   @Get('exports/:id')

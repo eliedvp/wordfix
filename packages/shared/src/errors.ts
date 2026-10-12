@@ -86,7 +86,12 @@ export const ERROR_CATALOG = {
   EXPORT_NOTHING_TO_APPLY: {
     status: 422,
     message:
-      'Aucune correction acceptée ou modifiée : acceptez ou modifiez au moins un point avant de télécharger le document corrigé.',
+      'Rien à appliquer : acceptez ou modifiez au moins un point, ou choisissez une option « Embellir », avant de générer le document corrigé.',
+  },
+  EXPORT_UNCHANGED: {
+    status: 422,
+    message:
+      "Votre document n'avait besoin d'aucune des améliorations demandées : aucun nouveau document n'a été produit.",
   },
   EXPORT_NO_APPLICABLE: {
     status: 422,

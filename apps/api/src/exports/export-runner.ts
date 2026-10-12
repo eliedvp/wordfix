@@ -3,7 +3,7 @@ import type { ErrorCode } from '@wordfix/shared';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { exportKey, FILE_STORAGE, type FileStorage } from '../storage/file-storage.js';
 import { ExportChildRunner } from './export-child-runner.js';
-import type { FrozenEdit } from './export-mapper.js';
+import { exportOptionsOf, type FrozenEdit } from './export-mapper.js';
 
 /**
  * Traitement d'un export (service d'export) : copie de l'original, corrections
@@ -45,7 +45,8 @@ export class ExportRunner {
     const source = await this.storage.get(document.storageKey);
     const edits = row.edits as unknown as FrozenEdit[];
     const startedAt = Date.now();
-    const outcome = await this.child.run(source, edits);
+    const options = exportOptionsOf(row.options);
+    const outcome = await this.child.run(source, edits, options);
     const durationMs = Date.now() - startedAt;
 
     if (outcome.kind === 'timeout') {
@@ -65,12 +66,15 @@ export class ExportRunner {
     }
 
     const skipped = outcome.skipped.map(({ id, reason }) => ({ issueId: id, reason }));
-    if (!outcome.file || outcome.applied.length === 0) {
-      // Aucune correction applicable : aucun fichier, jamais l'original à sa place.
-      await this.markFailed(exportId, 'EXPORT_NO_APPLICABLE', skipped);
+    const { beautified } = outcome;
+    if (!outcome.file) {
+      // Rien de modifié : aucun fichier, jamais l'original à sa place. Corrections
+      // demandées mais aucune applicable, ou document déjà conforme à « Embellir ».
+      const code = edits.length > 0 ? 'EXPORT_NO_APPLICABLE' : 'EXPORT_UNCHANGED';
+      await this.markFailed(exportId, code, skipped);
       this.logger.warn(
-        { ...log, skipped: skipped.length, durationMs },
-        'Aucune correction applicable',
+        { ...log, skipped: skipped.length, code, durationMs },
+        'Aucune modification applicable',
       );
       return;
     }
@@ -84,6 +88,7 @@ export class ExportRunner {
         storageKey: key,
         appliedCount: outcome.applied.length,
         skipped,
+        beautified,
         completedAt: new Date(),
       },
     });
@@ -99,7 +104,14 @@ export class ExportRunner {
       return;
     }
     this.logger.log(
-      { ...log, applied: outcome.applied.length, skipped: skipped.length, durationMs },
+      {
+        ...log,
+        applied: outcome.applied.length,
+        skipped: skipped.length,
+        typography: beautified.typography,
+        layout: beautified.layout,
+        durationMs,
+      },
       'Document corrigé prêt',
     );
   }
