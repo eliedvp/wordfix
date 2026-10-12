@@ -254,6 +254,10 @@ model Export {
   appliedCount   Int          @default(0)
   /// Corrections écartées : [{ issueId, reason }].
   skipped        Json         @default("[]")
+  /// Options « Embellir » demandées : { typography, layout }.
+  options        Json         @default("{}")
+  /// Résultat de « Embellir » : { typography, layout } (nombre de modifications).
+  beautified     Json?
   /// Clé du fichier produit dans le stockage ; null tant qu'il n'existe pas.
   storageKey     String?
   errorCode      String?

@@ -17,7 +17,8 @@ Navigateur ──► Site Next.js ──/api/*──► API NestJS ──► Pos
 
 1. **Import en deux temps** : le fichier est vérifié (structure, taille, sécurité), WordFix affiche son nombre de pages, puis l'utilisateur lance l'analyse.
 2. **Analyse asynchrone** (worker) : lecture structurée du `.docx`, règles déterministes et orthographe française ([Language Engine](docs/language-engine.md), dictionnaire Grammalecte, sans appel réseau), relecture IA paragraphe par paragraphe, puis par section, puis cohérence du document entier, vérification des contradictions.
-3. **Relecture** : chaque point est localisé (section, paragraphe, page estimée), expliqué, et peut être appliqué (copié), modifié, ignoré ou marqué comme vérifié.
+3. **Relecture** : chaque point est localisé (section, paragraphe, page estimée), expliqué, et peut être appliqué (copié), modifié, ignoré ou marqué comme vérifié. **Tout corriger** accepte d'un coup les corrections sûres (orthographe, grammaire, ponctuation), sans toucher aux décisions déjà prises, avec annulation.
+4. **Document corrigé** (service d'export) : les corrections acceptées ou modifiées sont appliquées à une copie du `.docx` (l'original n'est jamais modifié), avec en option **Embellir mon document** (typographie française, mise en page harmonisée) ; le fichier « Nom (corrigé).docx » se télécharge depuis l'espace de relecture.
 
 | Dossier              | Rôle                                         | Technologies                         |
 | -------------------- | -------------------------------------------- | ------------------------------------ |
@@ -26,7 +27,7 @@ Navigateur ──► Site Next.js ──/api/*──► API NestJS ──► Pos
 | `packages/shared`    | Types, constantes, erreurs, taxonomie        | TypeScript                           |
 | `docker-compose.yml` | Infrastructure locale                        | PostgreSQL 17, Redis 7               |
 
-Documentation : [décisions](docs/decisions.md) · [architecture](docs/architecture.md) · [sécurité](docs/security.md) · [tests](docs/testing.md) · [exploitation](docs/operations.md).
+Documentation : [décisions](docs/decisions.md) · [architecture](docs/architecture.md) · [sécurité](docs/security.md) · [tests](docs/testing.md) · [exploitation](docs/operations.md) · [déploiement](docs/deployment.md).
 
 ## Prérequis
 

@@ -4,3 +4,4 @@ export * from './health.js';
 export * from './taxonomy.js';
 export * from './document-model.js';
 export * from './api-types.js';
+export * from './corrections.js';

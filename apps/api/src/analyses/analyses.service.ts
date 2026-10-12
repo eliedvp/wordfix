@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
+  type AcceptReliableResultDto,
   type AnalysisDto,
   type BlockContextDto,
   type DocumentModel,
@@ -9,7 +10,10 @@ import {
   type IssueListDto,
   type IssueLocationDto,
   type IssueNature,
+  isReliableCorrection,
   isTerminalStatus,
+  RELIABLE_CATEGORIES,
+  type UndoAcceptResultDto,
 } from '@wordfix/shared';
 import { aiEnabled } from '../ai/models.js';
 import { AiUsageService } from '../ai/usage.service.js';
@@ -22,7 +26,7 @@ import type { Issue, Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { AnalysisQueue } from '../queue/analysis.queue.js';
 import { QuotaService } from '../security/quota.service.js';
-import { toAnalysisDto } from './analysis-mapper.js';
+import { reviewedIssuesWhere, toAnalysisDto } from './analysis-mapper.js';
 import type { ListIssuesQuery } from './dto/list-issues.query.js';
 
 const BLOCK_TEXT_LIMIT = 4000;
@@ -143,6 +147,87 @@ export class AnalysesService {
       }
     }
     return { items: dtos, total, blocks };
+  }
+
+  /**
+   * « Tout corriger » : accepte d'un coup les corrections fiables encore à traiter
+   * (règle partagée isReliableCorrection). Les décisions déjà prises par
+   * l'utilisateur ne sont jamais modifiées. Renvoie les points acceptés par cette
+   * action, pour pouvoir l'annuler.
+   */
+  async acceptReliable(ownerId: string, analysisId: string): Promise<AcceptReliableResultDto> {
+    const analysis = await this.findOwned(ownerId, analysisId);
+    if (analysis.status !== 'COMPLETED') throw new AppError('ANALYSIS_NOT_READY');
+    const result = await this.prisma.$transaction(async (tx) => {
+      const candidates = await tx.issue.findMany({
+        where: {
+          analysisId,
+          status: 'open',
+          category: { in: [...RELIABLE_CATEGORIES] },
+          nature: 'error',
+          confidence: 'high',
+          suggestion: { not: null },
+        },
+        select: {
+          id: true,
+          status: true,
+          category: true,
+          nature: true,
+          confidence: true,
+          original: true,
+          suggestion: true,
+        },
+      });
+      const ids = candidates.filter(isReliableCorrection).map((issue) => issue.id);
+      if (ids.length > 0) {
+        await tx.issue.updateMany({
+          where: { analysisId, id: { in: ids }, status: 'open' },
+          data: { status: 'accepted', userText: null },
+        });
+      }
+      return { acceptedIds: ids, analysis: await this.progress(tx, analysisId) };
+    });
+    this.logger.log(
+      { analysisId, accepted: result.acceptedIds.length },
+      'Corrections fiables acceptées (Tout corriger)',
+    );
+    return result;
+  }
+
+  /**
+   * Annulation de « Tout corriger » : les points indiqués redeviennent « à traiter »,
+   * seulement s'ils sont encore acceptés (une décision prise depuis est conservée).
+   */
+  async undoAccept(
+    ownerId: string,
+    analysisId: string,
+    issueIds: string[],
+  ): Promise<UndoAcceptResultDto> {
+    await this.findOwned(ownerId, analysisId);
+    const result = await this.prisma.$transaction(async (tx) => {
+      const accepted = await tx.issue.findMany({
+        where: { analysisId, id: { in: issueIds }, status: 'accepted' },
+        select: { id: true },
+      });
+      const ids = accepted.map((issue) => issue.id);
+      if (ids.length > 0) {
+        await tx.issue.updateMany({
+          where: { analysisId, id: { in: ids }, status: 'accepted' },
+          data: { status: 'open', userText: null },
+        });
+      }
+      return { reopenedIds: ids, analysis: await this.progress(tx, analysisId) };
+    });
+    this.logger.log({ analysisId, reopened: result.reopenedIds.length }, 'Tout corriger annulé');
+    return result;
+  }
+
+  private async progress(tx: Prisma.TransactionClient, analysisId: string) {
+    const [reviewedCount, issueCount] = await Promise.all([
+      tx.issue.count({ where: reviewedIssuesWhere(analysisId) }),
+      tx.issue.count({ where: { analysisId } }),
+    ]);
+    return { id: analysisId, reviewedCount, issueCount };
   }
 
   private async findOwned(ownerId: string, analysisId: string) {

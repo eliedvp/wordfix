@@ -1,9 +1,12 @@
 import type {
+  AcceptReliableResultDto,
   AnalysisDto,
+  CreateExportRequest,
   DocumentDto,
   ExportDto,
   IssueListDto,
   IssueStatus,
+  UndoAcceptResultDto,
   UpdatedIssueDto,
 } from '@wordfix/shared';
 import { ApiError, apiFetch, jsonBody, NETWORK_MESSAGE, parseError } from './client';
@@ -24,9 +27,23 @@ export const api = {
       method: 'PATCH',
       ...jsonBody(userText === undefined ? { status } : { status, userText }),
     }),
+  /** « Tout corriger » : acceptation des corrections fiables encore à traiter. */
+  acceptReliable: (analysisId: string) =>
+    apiFetch<AcceptReliableResultDto>(`/analyses/${analysisId}/issues/accept-reliable`, {
+      method: 'POST',
+    }),
+  /** Annulation de « Tout corriger » : seuls les points encore acceptés redeviennent à traiter. */
+  undoAccept: (analysisId: string, issueIds: string[]) =>
+    apiFetch<UndoAcceptResultDto>(`/analyses/${analysisId}/issues/undo-accept`, {
+      method: 'POST',
+      ...jsonBody({ issueIds }),
+    }),
   /** Demande d'un document corrigé (corrections acceptées ou modifiées, figées). */
-  createExport: (analysisId: string) =>
-    apiFetch<ExportDto>(`/analyses/${analysisId}/exports`, { method: 'POST' }),
+  createExport: (analysisId: string, options: CreateExportRequest = {}) =>
+    apiFetch<ExportDto>(`/analyses/${analysisId}/exports`, {
+      method: 'POST',
+      ...jsonBody(options),
+    }),
   getExport: (id: string) => apiFetch<ExportDto>(`/exports/${id}`),
   downloadExport: (id: string) => downloadExport(id),
 };

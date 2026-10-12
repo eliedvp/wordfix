@@ -2,6 +2,7 @@ import { type ChildProcess, fork } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { Inject, Injectable, Logger } from '@nestjs/common';
+import type { ExportOptions } from '@wordfix/shared';
 import type { TextEdit, TextEditSkipReason } from '../docx/writer/text-edits.js';
 import type { ChildRequest, ChildResponse } from './export-child.js';
 import { peakMemoryKb } from './process-memory.js';
@@ -37,6 +38,7 @@ export type ChildOutcome =
       file: Buffer | null;
       applied: string[];
       skipped: { id: string; reason: TextEditSkipReason }[];
+      beautified: { typography: number; layout: number };
     }
   /**
    * Mémoire dépassée : arrêté par la surveillance (`memory`), pic constaté à la fin
@@ -85,7 +87,11 @@ export class ExportChildRunner {
     });
   }
 
-  run(source: Buffer, edits: TextEdit[]): Promise<ChildOutcome> {
+  run(
+    source: Buffer,
+    edits: TextEdit[],
+    beautify: ExportOptions = { typography: false, layout: false },
+  ): Promise<ChildOutcome> {
     return new Promise((resolve) => {
       let settled = false;
       let killedFor: 'memory' | 'timeout' | 'ipc' | null = null;
@@ -172,6 +178,7 @@ export class ExportChildRunner {
             file,
             applied: response.applied,
             skipped: response.skipped as { id: string; reason: TextEditSkipReason }[],
+            beautified: response.beautified ?? { typography: 0, layout: 0 },
           });
         } else if (response?.kind === 'error') {
           finish(response);
@@ -192,7 +199,7 @@ export class ExportChildRunner {
         }
       });
 
-      const request: ChildRequest = { source, edits };
+      const request: ChildRequest = { source, edits, beautify };
       child.send(request, (error) => {
         if (error) kill('ipc');
       });

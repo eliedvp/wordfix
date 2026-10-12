@@ -219,6 +219,20 @@ export type ExportSkipReason =
   | 'repeated_header_footer';
 
 /**
+ * Options « Embellir mon document », appliquées à la copie après les corrections :
+ * - typography : typographie française (espaces insécables, guillemets, espaces doubles) ;
+ * - layout : paragraphes de texte courant justifiés et espacés de façon homogène.
+ * Le sens du texte ne change jamais (seuls des espaces, pour la typographie).
+ */
+export interface ExportOptions {
+  typography: boolean;
+  layout: boolean;
+}
+
+/** Corps de POST /analyses/:id/exports (options absentes : corrections seules). */
+export type CreateExportRequest = Partial<ExportOptions>;
+
+/**
  * Document corrigé. Les corrections (points acceptés ou modifiés) sont figées à la
  * demande ; le fichier produit expire au plus tard avec le fichier d'origine.
  */
@@ -232,7 +246,30 @@ export interface ExportDto {
   appliedCount: number;
   skipped: { issueId: string; reason: ExportSkipReason }[];
   errorCode: ErrorCode | null;
+  /** Options « Embellir » demandées. */
+  options: ExportOptions;
+  /** Résultat de « Embellir » (nombre de modifications), une fois l'export terminé. */
+  beautified: { typography: number; layout: number } | null;
   createdAt: string;
   completedAt: string | null;
   expiresAt: string;
+}
+
+/** Avancement de la relecture d'une analyse, recompté par le serveur. */
+export interface ReviewProgressDto {
+  id: string;
+  reviewedCount: number;
+  issueCount: number;
+}
+
+/** Résultat de « Tout corriger » : points acceptés par cette action (pour l'annuler). */
+export interface AcceptReliableResultDto {
+  acceptedIds: string[];
+  analysis: ReviewProgressDto;
+}
+
+/** Résultat de l'annulation de « Tout corriger » : points revenus « à traiter ». */
+export interface UndoAcceptResultDto {
+  reopenedIds: string[];
+  analysis: ReviewProgressDto;
 }

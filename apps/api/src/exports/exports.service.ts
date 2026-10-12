@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import type { DocumentModel, ExportDto } from '@wordfix/shared';
+import type { DocumentModel, ExportDto, ExportOptions } from '@wordfix/shared';
 import { AppError } from '../common/errors/app-error.js';
 import { newId } from '../common/ids.js';
 import type { Prisma } from '../generated/prisma/client.js';
@@ -27,7 +27,11 @@ export class ExportsService {
     @Inject(FILE_STORAGE) private readonly storage: FileStorage,
   ) {}
 
-  async create(ownerId: string, analysisId: string): Promise<ExportDto> {
+  async create(
+    ownerId: string,
+    analysisId: string,
+    options: ExportOptions = { typography: false, layout: false },
+  ): Promise<ExportDto> {
     const analysis = await this.prisma.analysis.findFirst({
       where: { id: analysisId, document: { ownerId } },
       include: { document: true },
@@ -43,10 +47,11 @@ export class ExportsService {
     }
 
     const edits = await this.frozenEdits(analysisId, document.id);
-    if (edits.length === 0) throw new AppError('EXPORT_NOTHING_TO_APPLY');
-    const editsHash = createHash('sha256').update(JSON.stringify(edits)).digest('hex');
+    const beautify = options.typography || options.layout;
+    if (edits.length === 0 && !beautify) throw new AppError('EXPORT_NOTHING_TO_APPLY');
+    const editsHash = createHash('sha256').update(JSON.stringify({ edits, options })).digest('hex');
 
-    // Mêmes corrections, export encore valide : on le renvoie au lieu d'en refaire un.
+    // Mêmes corrections et options, export encore valide : on le renvoie au lieu d'en refaire un.
     const existing = await this.prisma.export.findFirst({
       where: {
         analysisId,
@@ -66,12 +71,16 @@ export class ExportsService {
         edits: edits as unknown as Prisma.InputJsonValue,
         editsHash,
         requestedCount: edits.length,
+        options: { typography: options.typography, layout: options.layout },
         // Jamais plus longtemps que le fichier d'origine (24 h après l'import).
         expiresAt: document.fileExpiresAt,
       },
     });
     await this.queue.enqueue(created.id);
-    this.logger.log({ exportId: created.id, analysisId, edits: edits.length }, 'Export demandé');
+    this.logger.log(
+      { exportId: created.id, analysisId, edits: edits.length, ...options },
+      'Export demandé',
+    );
     return toExportDto(created);
   }
 

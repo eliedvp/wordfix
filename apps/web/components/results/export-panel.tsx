@@ -1,7 +1,7 @@
 'use client';
 
 import { useIsMutating, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { AnalysisDto, ExportDto, IssueDto } from '@wordfix/shared';
+import type { AnalysisDto, ExportDto, ExportOptions, IssueDto } from '@wordfix/shared';
 import {
   CircleAlert,
   CircleCheck,
@@ -23,6 +23,7 @@ import {
   isRetryableFailure,
   readStoredExport,
   replacementOf,
+  requestSignature,
   saveFile,
   SKIP_REASON_TEXTS,
   type StoredExport,
@@ -87,13 +88,19 @@ export function ExportPanel({ analysis, issues }: { analysis: AnalysisDto; issue
   }, []);
 
   const eligible = useMemo(() => exportableIssues(issues), [issues]);
-  const signature = useMemo(() => decisionsSignature(issues), [issues]);
+  // Options « Embellir mon document » (appliquées à la copie après les corrections).
+  const [options, setOptions] = useState<ExportOptions>({ typography: false, layout: false });
+  const beautify = options.typography || options.layout;
+  const signature = useMemo(
+    () => requestSignature(decisionsSignature(issues), options),
+    [issues, options],
+  );
   // Une décision encore en cours d'enregistrement ne doit pas manquer au document figé.
   const savingDecisions = useIsMutating() > 0;
 
   const [requestError, setRequestError] = useState<string | null>(null);
   const create = useMutation<ExportDto, unknown, string>({
-    mutationFn: () => api.createExport(analysis.id),
+    mutationFn: () => api.createExport(analysis.id, options),
     onMutate: () => setRequestError(null),
     onSuccess: (dto, usedSignature) => {
       client.setQueryData(['export', dto.id], dto);
@@ -138,7 +145,10 @@ export function ExportPanel({ analysis, issues }: { analysis: AnalysisDto; issue
     fileState !== 'deleted' &&
     (!current || stale || expired || (failed && isRetryableFailure(current.errorCode)));
   const canRequest =
-    showRequest && fileState === 'available' && eligible.length > 0 && !savingDecisions;
+    showRequest &&
+    fileState === 'available' &&
+    (eligible.length > 0 || beautify) &&
+    !savingDecisions;
   const requestLabel = !current
     ? 'Générer le document corrigé'
     : failed && !stale
@@ -181,7 +191,7 @@ export function ExportPanel({ analysis, issues }: { analysis: AnalysisDto; issue
         }
         detail={
           current
-            ? `${plural(current.requestedCount, 'correction', 'corrections')} à appliquer. Cela prend en général quelques secondes.`
+            ? `${current.requestedCount > 0 ? `${plural(current.requestedCount, 'correction', 'corrections')} à appliquer` : 'Embellissement du document'}. Cela prend en général quelques secondes.`
             : undefined
         }
       />
@@ -190,9 +200,18 @@ export function ExportPanel({ analysis, issues }: { analysis: AnalysisDto; issue
     status = (
       <Notice tone="success" icon={<CircleCheck />}>
         <p className="font-semibold">
-          Document corrigé prêt : {current.appliedCount} sur{' '}
-          {plural(current.requestedCount, 'correction appliquée', 'corrections appliquées')}.
+          {current.requestedCount > 0 ? (
+            <>
+              Document corrigé prêt : {current.appliedCount} sur{' '}
+              {plural(current.requestedCount, 'correction appliquée', 'corrections appliquées')}.
+            </>
+          ) : (
+            'Document embelli prêt.'
+          )}
         </p>
+        {current.beautified && (current.options.typography || current.options.layout) ? (
+          <p className="mt-0.5">{beautifiedText(current)}</p>
+        ) : null}
         <p className="mt-0.5">
           Téléchargeable jusqu’au {formatDate(current.expiresAt)}. Relisez-le dans Word avant de
           l’envoyer.
@@ -228,8 +247,10 @@ export function ExportPanel({ analysis, issues }: { analysis: AnalysisDto; issue
   } else if (eligible.length === 0) {
     status = (
       <p className="text-ink-subtle text-sm">
-        Acceptez ou modifiez au moins un point pour générer un document corrigé. Les points ignorés,
-        vérifiés ou non traités ne sont jamais appliqués.
+        {beautify
+          ? 'Aucune correction choisie : seules les améliorations « Embellir » cochées seront appliquées. '
+          : 'Acceptez ou modifiez au moins un point, ou cochez une option « Embellir », pour générer un document. '}
+        Les points ignorés, vérifiés ou non traités ne sont jamais appliqués.
       </p>
     );
   } else {
@@ -289,6 +310,32 @@ export function ExportPanel({ analysis, issues }: { analysis: AnalysisDto; issue
         </div>
       </div>
 
+      {fileState !== 'deleted' ? (
+        <fieldset className="border-hairline rounded-control mt-4 border px-4 py-3">
+          <legend className="text-ink px-1 text-sm font-semibold">Embellir mon document</legend>
+          <p className="text-ink-subtle text-xs">
+            Présentation améliorée sans changer le sens du texte, appliquée à la copie après les
+            corrections.
+          </p>
+          <div className="mt-2 grid gap-2 sm:grid-cols-2">
+            <Option
+              checked={options.typography}
+              disabled={active}
+              onChange={(typography) => setOptions((o) => ({ ...o, typography }))}
+              label="Typographie française"
+              help="Espaces insécables avant ; : ! ? et dans les guillemets « », espaces doubles supprimées. Adresses web, e-mails et code laissés tels quels."
+            />
+            <Option
+              checked={options.layout}
+              disabled={active}
+              onChange={(layout) => setOptions((o) => ({ ...o, layout }))}
+              label="Mise en page harmonisée"
+              help="Texte courant justifié, interligne 1,15 et 6 pt après chaque paragraphe. Titres, listes, tableaux et paragraphes centrés inchangés."
+            />
+          </div>
+        </fieldset>
+      ) : null}
+
       <div className="mt-4 space-y-3" aria-live="polite">
         {status}
         {showRequest && fileState === 'checking' ? (
@@ -318,9 +365,9 @@ export function ExportPanel({ analysis, issues }: { analysis: AnalysisDto; issue
         {stale && ready ? (
           <Notice tone="warning" icon={<TriangleAlert />}>
             Vos choix ont changé depuis la génération de ce document : il ne les reflète plus.
-            {eligible.length > 0
+            {eligible.length > 0 || beautify
               ? ' Générez une nouvelle version pour les appliquer.'
-              : ' Aucune correction n’est plus choisie.'}
+              : ' Aucune correction ni amélioration n’est plus choisie.'}
           </Notice>
         ) : null}
         {requestError ? (
@@ -344,6 +391,57 @@ export function ExportPanel({ analysis, issues }: { analysis: AnalysisDto; issue
         <SkippedList skipped={current.skipped} issues={issues} />
       ) : null}
     </section>
+  );
+}
+
+/** Compte rendu de « Embellir » (options demandées seulement). */
+function beautifiedText(dto: ExportDto): string {
+  const parts: string[] = [];
+  const counts = dto.beautified ?? { typography: 0, layout: 0 };
+  if (dto.options.typography) {
+    parts.push(
+      counts.typography > 0
+        ? plural(counts.typography, 'correction typographique', 'corrections typographiques')
+        : 'typographie déjà conforme',
+    );
+  }
+  if (dto.options.layout) {
+    parts.push(
+      counts.layout > 0
+        ? plural(counts.layout, 'paragraphe mis en page', 'paragraphes mis en page')
+        : 'mise en page déjà homogène',
+    );
+  }
+  return `Embellissement : ${parts.join(' · ')}.`;
+}
+
+function Option({
+  checked,
+  disabled,
+  onChange,
+  label,
+  help,
+}: {
+  checked: boolean;
+  disabled: boolean;
+  onChange: (checked: boolean) => void;
+  label: string;
+  help: string;
+}) {
+  return (
+    <label className="flex cursor-pointer items-start gap-2 text-sm">
+      <input
+        type="checkbox"
+        className="accent-brand mt-0.5 size-4 shrink-0"
+        checked={checked}
+        disabled={disabled}
+        onChange={(event) => onChange(event.target.checked)}
+      />
+      <span>
+        <span className="text-ink font-medium">{label}</span>
+        <span className="text-ink-subtle block text-xs">{help}</span>
+      </span>
+    </label>
   );
 }
 
