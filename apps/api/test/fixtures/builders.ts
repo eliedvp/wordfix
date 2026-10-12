@@ -26,6 +26,8 @@ export type FixtureNode =
   | { p: string; bold?: boolean; footnote?: string }
   | { bullet: string; level?: number }
   | { table: string[][] }
+  /** Entrée de sommaire Word (style « TOC1 », comme un sommaire généré par Word). */
+  | { toc: string }
   | { pageBreak: true };
 
 const HEADINGS = {
@@ -60,6 +62,8 @@ export async function buildDocx(
         runs.push(new FootnoteReferenceRun(footnoteId));
       }
       children.push(new Paragraph({ children: runs, alignment: AlignmentType.JUSTIFIED }));
+    } else if ('toc' in node) {
+      children.push(new Paragraph({ text: node.toc, style: 'TOC1' }));
     } else if ('bullet' in node) {
       children.push(new Paragraph({ text: node.bullet, bullet: { level: node.level ?? 0 } }));
     } else if ('table' in node) {

@@ -21,7 +21,10 @@ export function IssueList({
 }) {
   const selectedRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
-    selectedRef.current?.scrollIntoView({ block: 'nearest' });
+    // Seulement si la liste est affichée : un panneau fermé ne fait pas défiler la page.
+    const element = selectedRef.current;
+    if (element && element.getClientRects().length > 0)
+      element.scrollIntoView({ block: 'nearest' });
   }, [selectedId]);
 
   return (

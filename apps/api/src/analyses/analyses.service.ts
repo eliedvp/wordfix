@@ -5,6 +5,7 @@ import {
   type AnalysisDto,
   type BlockContextDto,
   type DocumentModel,
+  type DocumentStructureDto,
   type IssueCategory,
   type IssueDto,
   type IssueListDto,
@@ -22,6 +23,7 @@ import type { Env } from '../config/env.schema.js';
 import { newId } from '../common/ids.js';
 import { PROMPT_VERSION } from '../engine/prompts/prompts.v1.js';
 import { LocationResolver } from '../engine/postprocess/location.js';
+import { summarizeStructure } from '../engine/structure.js';
 import type { Issue, Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { AnalysisQueue } from '../queue/analysis.queue.js';
@@ -126,8 +128,11 @@ export class AnalysesService {
 
     const dtos = items.map(toIssueDto);
     const blocks: Record<string, BlockContextDto> = {};
+    // Contenu extrait supprimé (expiration) : structure inconnue, jamais supposée.
+    let structure: DocumentStructureDto | null = null;
     if (content) {
       const model = content.model as unknown as DocumentModel;
+      structure = summarizeStructure(model);
       const resolver = new LocationResolver(model);
       const wanted = new Set(
         dtos.flatMap((dto) => [dto.location.blockId, ...dto.related.map((r) => r.blockId)]),
@@ -146,7 +151,7 @@ export class AnalysesService {
         };
       }
     }
-    return { items: dtos, total, blocks };
+    return { items: dtos, total, blocks, structure };
   }
 
   /**

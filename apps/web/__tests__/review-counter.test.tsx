@@ -115,6 +115,8 @@ function analysisDto(): AnalysisDto {
 
 vi.mock('@/lib/api/endpoints', () => ({
   api: {
+    // Panneau « Télécharger » (monté, masqué) : fichier d'origine disponible.
+    getDocument: () => Promise.resolve({ id: 'doc_1', fileAvailable: true }),
     getAnalysis: () => {
       server.analysisCalls++;
       if (server.analysisDown) {
@@ -206,7 +208,8 @@ async function decide(label: 'Ignorer' | 'J’ai vérifié') {
 }
 
 beforeEach(() => {
-  url.set('');
+  // Panneau « Corriger » ouvert (aucun panneau ne l'est par défaut).
+  url.set('panneau=corriger');
   server.issues = [
     issue('iss_a', 'error', 'spelling', 1),
     issue('iss_b', 'suggestion', 'style', 2),
@@ -375,7 +378,8 @@ describe('Compteur « points traités » après une décision', () => {
     // Nouveau cache (comme un rechargement), même adresse.
     renderScreen();
     expect(await screen.findByText('2 / 4 points traités')).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: 'Traités' }));
+    // Les filtres sont dans le panneau « Corriger », affiché une fois les points chargés.
+    await userEvent.click(await screen.findByRole('button', { name: 'Traités' }));
     expect(treatedInList()).toEqual([
       expect.stringContaining('extrait iss_a'),
       expect.stringContaining('extrait iss_b'),

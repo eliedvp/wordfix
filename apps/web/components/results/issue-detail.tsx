@@ -30,11 +30,12 @@ export type IssueAction =
   | { type: 'edit'; text: string }
   | { type: 'ignore' }
   | { type: 'verify' }
-  | { type: 'reopen' };
+  | { type: 'reopen' }
+  | { type: 'copy'; text: string };
 
 const STATUS_TEXT: Record<string, string> = {
-  accepted: 'Correction acceptée et copiée.',
-  edited: 'Votre version a été enregistrée.',
+  accepted: 'Correction acceptée : elle sera appliquée au document téléchargé.',
+  edited: 'Votre version sera appliquée au document téléchargé.',
   ignored: 'Point ignoré.',
   verified: 'Vous avez vérifié ce point.',
 };
@@ -102,6 +103,8 @@ export function IssueDetail({
   const diff = issue.suggestion ? wordDiff(issue.original, issue.suggestion) : null;
   const canCorrect = issue.nature === 'error' || issue.nature === 'suggestion';
   const done = isDone(issue);
+  // Texte qui serait appliqué au document : copiable sur demande (jamais automatiquement).
+  const copyable = issue.status === 'edited' ? issue.userText : issue.suggestion;
 
   return (
     <article aria-label="Détail du point" className="flex h-full flex-col">
@@ -134,7 +137,20 @@ export function IssueDetail({
 
       {diff ? (
         <div className="mt-4">
-          <h3 className="text-ink-subtle text-xs font-semibold">Proposition</h3>
+          <div className="flex items-center justify-between gap-2">
+            <h3 className="text-ink-subtle text-xs font-semibold">Proposition</h3>
+            {copyable ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="-my-1 h-7 px-2 text-xs"
+                onClick={() => onAction({ type: 'copy', text: copyable })}
+              >
+                <Copy aria-hidden />
+                Copier
+              </Button>
+            ) : null}
+          </div>
           <p className="text-ink mt-1 text-[15px] leading-7">
             {diff.prefix}
             {diff.removed ? (
@@ -194,8 +210,8 @@ export function IssueDetail({
               onClick={() => onAction({ type: 'edit', text: draft })}
               disabled={draft.trim().length === 0}
             >
-              <Copy aria-hidden />
-              Enregistrer et copier
+              <Check aria-hidden />
+              Enregistrer ma version
             </Button>
             <Button variant="ghost" onClick={() => setEditing(false)}>
               Annuler
@@ -221,7 +237,7 @@ export function IssueDetail({
                 </Button>
               ) : null}
               {canCorrect ? (
-                <Button variant="secondary" onClick={() => setEditing(true)} title="Raccourci : E">
+                <Button variant="secondary" onClick={() => setEditing(true)}>
                   <Pencil aria-hidden />
                   Modifier
                 </Button>
@@ -247,8 +263,8 @@ export function IssueDetail({
             </div>
           )}
           <p className={cn('text-ink-subtle mt-3 text-xs', done && 'hidden')}>
-            Le fichier Word n’est pas modifié : la correction est copiée pour que vous la reportiez
-            dans Word.
+            Les corrections acceptées ou modifiées sont appliquées à une copie de votre document au
+            téléchargement. Votre fichier d’origine n’est jamais modifié.
           </p>
         </div>
       )}

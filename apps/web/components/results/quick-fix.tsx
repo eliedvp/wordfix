@@ -3,44 +3,30 @@
 import { useIsMutating } from '@tanstack/react-query';
 import { type IssueDto, isReliableCorrection } from '@wordfix/shared';
 import { CircleCheck, RotateCcw, TriangleAlert, Wand2 } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useSyncExternalStore } from 'react';
 import { Button } from '@/components/ui/button';
 import { ApiError, NETWORK_MESSAGE } from '@/lib/api/client';
+import { batchSnapshot, parseBatch, subscribeBatch, writeBatch } from '@/lib/bulk-batch';
 import { useBulkCorrections } from '@/lib/hooks/use-bulk-corrections';
 
 const plural = (n: number, one: string, many: string) => `${n} ${n > 1 ? many : one}`;
-
-/** Points acceptés par le dernier « Tout corriger », gardés pour la durée de l'onglet. */
-const storageKey = (analysisId: string) => `wordfix.bulk.${analysisId}`;
-function readBatch(analysisId: string): string[] | null {
-  try {
-    const raw = window.sessionStorage.getItem(storageKey(analysisId));
-    const value: unknown = raw ? JSON.parse(raw) : null;
-    return Array.isArray(value) && value.every((id) => typeof id === 'string') ? value : null;
-  } catch {
-    return null;
-  }
-}
-function writeBatch(analysisId: string, ids: string[] | null): void {
-  try {
-    if (ids) window.sessionStorage.setItem(storageKey(analysisId), JSON.stringify(ids));
-    else window.sessionStorage.removeItem(storageKey(analysisId));
-  } catch {
-    // Stockage indisponible : l'annulation reste possible tant que la page est ouverte.
-  }
-}
 
 /**
  * « Tout corriger » : accepte d'un coup les corrections fiables (orthographe,
  * grammaire, ponctuation ; erreurs sûres avec une proposition), sans toucher aux
  * décisions déjà prises, avec annulation. Le fichier Word n'est modifié qu'au moment
- * de générer le document corrigé (copie, jamais l'original).
+ * de télécharger le document (copie, jamais l'original). Le lot annulable est partagé
+ * avec « Télécharger les modifications » (`lib/bulk-batch.ts`).
  */
 export function QuickFix({ analysisId, issues }: { analysisId: string; issues: IssueDto[] }) {
   const { acceptAll, undo } = useBulkCorrections(analysisId);
-  const [batch, setBatch] = useState<string[] | null>(() =>
-    typeof window === 'undefined' ? null : readBatch(analysisId),
+  // Lot du dernier « Tout corriger » (partagé avec le panneau « Télécharger »).
+  const rawBatch = useSyncExternalStore(
+    (listener) => subscribeBatch(analysisId, listener),
+    () => batchSnapshot(analysisId),
+    () => '',
   );
+  const batch = useMemo(() => parseBatch(rawBatch), [rawBatch]);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   // Une décision en cours d'enregistrement : on attend qu'elle soit prise en compte.
@@ -54,10 +40,7 @@ export function QuickFix({ analysisId, issues }: { analysisId: string; issues: I
     return batch.filter((id) => accepted.has(id)).length;
   }, [batch, issues]);
 
-  const remember = (ids: string[] | null) => {
-    writeBatch(analysisId, ids);
-    setBatch(ids);
-  };
+  const remember = (ids: string[] | null) => writeBatch(analysisId, ids);
   const fail = (cause: unknown) =>
     setError(cause instanceof ApiError ? cause.message : NETWORK_MESSAGE);
 
@@ -100,7 +83,7 @@ export function QuickFix({ analysisId, issues }: { analysisId: string; issues: I
   return (
     <section
       aria-labelledby="quick-fix-title"
-      className="border-hairline bg-surface rounded-card mt-6 border p-5 shadow-sm"
+      className="border-hairline bg-canvas rounded-card border p-5"
     >
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex min-w-0 items-start gap-3">
@@ -141,7 +124,7 @@ export function QuickFix({ analysisId, issues }: { analysisId: string; issues: I
             <span>
               {notice}
               {undoable > 0
-                ? ' Vous pouvez annuler, ou générer le document corrigé ci-dessous.'
+                ? ' Elles seront appliquées au document téléchargé. Vous pouvez annuler.'
                 : ''}
             </span>
           </p>

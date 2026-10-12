@@ -1,16 +1,30 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import type { AnalysisDto, DocumentDto, ExportDto, IssueDto, IssueStatus } from '@wordfix/shared';
+import {
+  type AcceptReliableResultDto,
+  type AnalysisDto,
+  type DocumentDto,
+  type ExportDto,
+  type ExportOptions,
+  type IssueDto,
+  type IssueListDto,
+  type IssueStatus,
+  isReliableCorrection,
+} from '@wordfix/shared';
+import { useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ExportPanel } from '@/components/results/export-panel';
+import { DOWNLOAD_LABEL, ExportPanel, NO_OPTIONS } from '@/components/results/export-panel';
+import { FormattingPanel } from '@/components/results/formatting-panel';
 import { ApiError } from '@/lib/api/client';
 import { fileNameFromDisposition } from '@/lib/api/endpoints';
 import { decisionsSignature, exportableIssues, requestSignature } from '@/lib/export';
+import { useIssues } from '@/lib/hooks/use-issues';
 
 /**
- * Panneau « Document corrigé » : vrais composants et vrai cache React Query ; seule
- * l'API est simulée. Le téléchargement ne peut viser que la route d'export.
+ * Panneaux « Mise en forme » et « Télécharger les modifications » : vrais composants et
+ * vrai cache React Query ; seule l'API est simulée. Le téléchargement ne peut viser que
+ * la route d'export, et seulement un document prêt correspondant aux choix affichés.
  */
 
 const server = vi.hoisted(() => ({
@@ -29,6 +43,10 @@ const server = vi.hoisted(() => ({
   getError: null as ApiError | null,
   downloadError: null as ApiError | null,
   downloads: [] as string[],
+  /** Points connus du serveur pour « Tout corriger » (même règle partagée que l'API). */
+  issues: [] as IssueDto[],
+  acceptCalls: 0,
+  acceptError: null as ApiError | null,
 }));
 
 const saved = vi.hoisted(() => ({ files: [] as { blob: Blob; fileName: string }[] }));
@@ -63,6 +81,22 @@ vi.mock('@/lib/api/endpoints', async (importOriginal) => {
         const next = server.sequence.length > 1 ? server.sequence.shift() : server.sequence[0];
         return next ? Promise.resolve(next) : Promise.reject(new ApiError('NOT_FOUND', 'x', 404));
       },
+      listIssues: (): Promise<IssueListDto> =>
+        Promise.resolve({
+          items: server.issues.map((i) => ({ ...i })),
+          total: server.issues.length,
+          blocks: {},
+        }),
+      acceptReliable: (): Promise<AcceptReliableResultDto> => {
+        server.acceptCalls++;
+        if (server.acceptError) return Promise.reject(server.acceptError);
+        const ids = server.issues.filter(isReliableCorrection).map((i) => i.id);
+        for (const issue of server.issues) if (ids.includes(issue.id)) issue.status = 'accepted';
+        return Promise.resolve({
+          acceptedIds: ids,
+          analysis: { id: 'ana_1', reviewedCount: ids.length, issueCount: server.issues.length },
+        });
+      },
       downloadExport: (id: string) => {
         server.downloads.push(id);
         if (server.downloadError) return Promise.reject(server.downloadError);
@@ -93,7 +127,12 @@ function exportDto(status: ExportDto['status'], fields: Partial<ExportDto> = {})
   };
 }
 
-const analysis = { id: 'ana_1', documentId: 'doc_1' } as AnalysisDto;
+const analysis = {
+  id: 'ana_1',
+  documentId: 'doc_1',
+  warnings: [],
+  skippedAiChecks: [],
+} as unknown as AnalysisDto;
 
 function issue(id: string, status: IssueStatus, fields: Partial<IssueDto> = {}): IssueDto {
   return {
@@ -128,14 +167,49 @@ const decided = () => [
   issue('iss_a', 'accepted'),
   issue('iss_b', 'edited', { userText: 'ma version' }),
   issue('iss_c', 'ignored'),
-  issue('iss_d', 'open'),
+  // Point encore ouvert mais non fiable (confiance moyenne) : jamais appliqué d'office.
+  issue('iss_d', 'open', { confidence: 'medium' }),
 ];
 
+/** « Mise en forme » et « Télécharger », options partagées comme dans l'écran des résultats. */
+function Panels({ issues }: { issues: IssueDto[] }) {
+  const [options, setOptions] = useState<ExportOptions>(NO_OPTIONS);
+  return (
+    <>
+      <FormattingPanel
+        analysis={analysis}
+        issues={issues}
+        options={options}
+        onChange={setOptions}
+        onShowStructure={() => undefined}
+      />
+      <ExportPanel analysis={analysis} issues={issues} options={options} />
+    </>
+  );
+}
+
+/** Comme l'écran réel : les points viennent du cache (mis à jour par « Tout corriger »). */
+function LivePanels() {
+  const { data } = useIssues('ana_1', true);
+  return data ? <Panels issues={data.items} /> : null;
+}
+
+function renderLive(issues: IssueDto[]) {
+  server.issues = issues.map((i) => ({ ...i }));
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={client}>
+      <LivePanels />
+    </QueryClientProvider>,
+  );
+}
+
 function renderPanel(issues: IssueDto[]) {
+  server.issues = issues.map((i) => ({ ...i }));
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const view = render(
     <QueryClientProvider client={client}>
-      <ExportPanel analysis={analysis} issues={issues} />
+      <Panels issues={issues} />
     </QueryClientProvider>,
   );
   return {
@@ -143,7 +217,7 @@ function renderPanel(issues: IssueDto[]) {
     update: (next: IssueDto[]) =>
       view.rerender(
         <QueryClientProvider client={client}>
-          <ExportPanel analysis={analysis} issues={next} />
+          <Panels issues={next} />
         </QueryClientProvider>,
       ),
   };
@@ -153,8 +227,19 @@ function renderPanel(issues: IssueDto[]) {
 const signatureOf = (issues: IssueDto[]) =>
   requestSignature(decisionsSignature(issues), { typography: false, layout: false });
 
-const panel = () => screen.getByRole('region', { name: 'Document corrigé' });
-const downloadButton = () => within(panel()).queryByRole('button', { name: /Télécharger/ });
+/** Bouton unique « Télécharger les modifications » (préparer puis télécharger). */
+const mainButton = () => screen.queryByRole('button', { name: DOWNLOAD_LABEL });
+/** Clique sur le bouton principal dès qu'il est utilisable (fichier d'origine confirmé). */
+const clickMain = async () => {
+  const button = await screen.findByRole('button', { name: DOWNLOAD_LABEL });
+  await waitFor(() => expect(button).toBeEnabled());
+  await userEvent.click(button);
+};
+/** Aucun fichier n'a été demandé ni enregistré. */
+const nothingDownloaded = () => {
+  expect(server.downloads).toEqual([]);
+  expect(saved.files).toHaveLength(0);
+};
 
 beforeEach(() => {
   Object.assign(server, {
@@ -170,6 +255,9 @@ beforeEach(() => {
     getError: null,
     downloadError: null,
     downloads: [],
+    issues: [],
+    acceptCalls: 0,
+    acceptError: null,
   });
   saved.files = [];
   window.sessionStorage.clear();
@@ -207,48 +295,72 @@ describe('Règles du document corrigé', () => {
   });
 });
 
-describe('Panneau « Document corrigé »', () => {
-  it('aucune correction choisie : génération impossible, explication', async () => {
-    renderPanel([issue('iss_c', 'ignored'), issue('iss_d', 'open')]);
-    expect(await screen.findByText(/Acceptez ou modifiez au moins un point/)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Générer le document corrigé' })).toBeDisabled();
-    expect(downloadButton()).toBeNull();
+describe('Panneau « Télécharger les modifications »', () => {
+  it('aucune modification choisie : téléchargement impossible, explication', async () => {
+    renderPanel([issue('iss_c', 'ignored'), issue('iss_d', 'open', { confidence: 'low' })]);
+    expect(await screen.findByText(/acceptez ou modifiez au moins un point/)).toBeInTheDocument();
+    expect(mainButton()).toBeDisabled();
+    expect(server.createCalls).toBe(0);
+    nothingDownloaded();
   });
 
-  it('attente, génération puis téléchargement du seul document corrigé', async () => {
+  it('un clic : attente, préparation puis téléchargement automatique du seul document corrigé', async () => {
     server.sequence = [exportDto('QUEUED'), exportDto('RUNNING'), exportDto('READY')];
     renderPanel(decided());
     expect(
-      await screen.findByText('2 corrections acceptées ou modifiées seront appliquées', {
-        exact: false,
-      }),
-    ).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: 'Générer le document corrigé' }));
+      (await screen.findByText('Corrections acceptées ou modifiées')).nextSibling,
+    ).toHaveTextContent('2 corrections');
+    await clickMain();
     expect(server.createCalls).toBe(1);
 
-    expect(await screen.findByText(/en attente de génération/)).toBeInTheDocument();
-    // Aucun téléchargement tant que le document n'est pas prêt.
-    expect(downloadButton()).toBeNull();
+    expect(await screen.findByText(/en attente de préparation/)).toBeInTheDocument();
+    // Pendant la préparation : bouton occupé, aucun téléchargement.
+    expect(screen.getByRole('button', { name: 'Préparation de votre document…' })).toBeDisabled();
+    nothingDownloaded();
     expect(
-      await screen.findByText('Génération du document corrigé…', {}, { timeout: 5000 }),
+      await screen.findByText(
+        'Préparation de votre document…',
+        { selector: 'p' },
+        { timeout: 5000 },
+      ),
     ).toBeInTheDocument();
-    expect(downloadButton()).toBeNull();
+    nothingDownloaded();
 
     expect(
       await screen.findByText(
-        /Document corrigé prêt : 2 sur 2 corrections appliquées/,
+        /Document prêt : 2 sur 2 corrections appliquées/,
         {},
-        {
-          timeout: 5000,
-        },
+        { timeout: 5000 },
       ),
     ).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: 'Télécharger le document corrigé' }));
+    // Téléchargé une seule fois, automatiquement, depuis la route d'export.
     await waitFor(() => expect(saved.files).toHaveLength(1));
     expect(server.downloads).toEqual(['exp_1']);
     expect(saved.files[0]?.fileName).toBe('Rapport (corrigé).docx');
-    // Le document prêt correspond aux choix : pas de nouvelle demande proposée.
-    expect(screen.queryByRole('button', { name: /Générer/ })).toBeNull();
+    expect(screen.getByText(/Téléchargement lancé\. Rien ne s’est passé/)).toBeInTheDocument();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(server.downloads).toEqual(['exp_1']);
+    // Le document prêt correspond aux choix : un nouveau clic retélécharge, sans demande.
+    await clickMain();
+    await waitFor(() => expect(saved.files).toHaveLength(2));
+    expect(server.downloads).toEqual(['exp_1', 'exp_1']);
+    expect(server.createCalls).toBe(1);
+    expect(screen.queryByRole('button', { name: 'Réessayer' })).toBeNull();
+  }, 15_000);
+
+  it('choix modifiés pendant la préparation : pas de téléchargement automatique d’un document périmé', async () => {
+    server.sequence = [exportDto('RUNNING'), exportDto('READY')];
+    const { update } = renderPanel(decided());
+    await clickMain();
+    await screen.findByText('Préparation de votre document…', { selector: 'p' });
+    update(decided().map((i) => (i.id === 'iss_d' ? { ...i, status: 'accepted' as const } : i)));
+    expect(
+      await screen.findByText(/Vos choix ont changé depuis la génération/, {}, { timeout: 5000 }),
+    ).toBeInTheDocument();
+    await new Promise((r) => setTimeout(r, 100));
+    nothingDownloaded();
+    expect(screen.getByRole('button', { name: 'Télécharger la version précédente' })).toBeEnabled();
+    expect(mainButton()).toBeEnabled();
   }, 15_000);
 
   it('corrections non appliquées : passage, correction choisie et motif', async () => {
@@ -259,9 +371,7 @@ describe('Panneau « Document corrigé »', () => {
       }),
     ];
     renderPanel(decided());
-    await userEvent.click(
-      await screen.findByRole('button', { name: 'Générer le document corrigé' }),
-    );
+    await clickMain();
     expect(
       await screen.findByText(/1 sur 2 corrections appliquées/, {}, { timeout: 5000 }),
     ).toBeInTheDocument();
@@ -283,14 +393,13 @@ describe('Panneau « Document corrigé »', () => {
       }),
     ];
     renderPanel(decided());
-    await userEvent.click(
-      await screen.findByRole('button', { name: 'Générer le document corrigé' }),
-    );
+    await clickMain();
     expect(await screen.findByText('Aucun document corrigé n’a été produit.')).toBeInTheDocument();
     expect(screen.getByText(/n'a pu être appliquée sans risque/)).toBeInTheDocument();
     expect(screen.getByText(/2 corrections non appliquées/)).toBeInTheDocument();
-    expect(downloadButton()).toBeNull();
-    expect(screen.queryByRole('button', { name: /Réessayer|Générer/ })).toBeNull();
+    nothingDownloaded();
+    expect(mainButton()).toBeNull();
+    expect(screen.queryByRole('button', { name: /Réessayer/ })).toBeNull();
   });
 
   it.each([
@@ -302,42 +411,43 @@ describe('Panneau « Document corrigé »', () => {
     async (code, text, retry) => {
       server.sequence = [exportDto('FAILED', { errorCode: code })];
       renderPanel(decided());
-      await userEvent.click(
-        await screen.findByRole('button', { name: 'Générer le document corrigé' }),
-      );
+      await clickMain();
       expect(await screen.findByText(text)).toBeInTheDocument();
-      expect(downloadButton()).toBeNull();
+      nothingDownloaded();
+      expect(mainButton()).toBeNull();
       expect(screen.queryByRole('button', { name: 'Réessayer' }) !== null).toBe(retry);
+      if (retry) {
+        await userEvent.click(screen.getByRole('button', { name: 'Réessayer' }));
+        expect(server.createCalls).toBe(2);
+      }
     },
   );
 
   it('choix modifiés après la génération : document signalé comme périmé, nouvelle version proposée', async () => {
     server.sequence = [exportDto('READY')];
     const { update } = renderPanel(decided());
-    await userEvent.click(
-      await screen.findByRole('button', { name: 'Générer le document corrigé' }),
-    );
-    await screen.findByText(/Document corrigé prêt/);
+    await clickMain();
+    await screen.findByText(/Document prêt/);
     update(decided().map((i) => (i.id === 'iss_d' ? { ...i, status: 'accepted' as const } : i)));
     expect(
       await screen.findByText(/Vos choix ont changé depuis la génération/),
     ).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Télécharger la version précédente' })).toBeEnabled();
-    expect(screen.getByRole('button', { name: 'Générer une nouvelle version' })).toBeEnabled();
+    // Le bouton principal prépare désormais une nouvelle version (nouvelle demande).
+    await userEvent.click(mainButton() as HTMLElement);
+    expect(server.createCalls).toBe(2);
   });
 
-  it('demande refusée (quota) : message du serveur affiché', async () => {
+  it('demande refusée (quota) : message du serveur affiché, aucun téléchargement', async () => {
     server.createError = new ApiError(
       'EXPORT_RATE_LIMITED',
       'Vous avez atteint la limite de documents corrigés. Réessayez un peu plus tard.',
       429,
     );
     renderPanel(decided());
-    await userEvent.click(
-      await screen.findByRole('button', { name: 'Générer le document corrigé' }),
-    );
+    await clickMain();
     expect(await screen.findByText(/limite de documents corrigés/)).toBeInTheDocument();
-    expect(downloadButton()).toBeNull();
+    nothingDownloaded();
   });
 
   it('téléchargement refusé (expiré) : message, aucun fichier enregistré', async () => {
@@ -348,17 +458,13 @@ describe('Panneau « Document corrigé »', () => {
       410,
     );
     renderPanel(decided());
-    await userEvent.click(
-      await screen.findByRole('button', { name: 'Générer le document corrigé' }),
-    );
-    await userEvent.click(
-      await screen.findByRole('button', { name: 'Télécharger le document corrigé' }),
-    );
+    await clickMain();
     expect(await screen.findByText(/n'est plus disponible/)).toBeInTheDocument();
+    expect(server.downloads).toEqual(['exp_1']);
     expect(saved.files).toHaveLength(0);
   });
 
-  it('document corrigé expiré : plus de téléchargement proposé', async () => {
+  it('document corrigé expiré : jamais téléchargé', async () => {
     window.sessionStorage.setItem(
       'wordfix.export.ana_1',
       JSON.stringify({ id: 'exp_1', signature: signatureOf(decided()) }),
@@ -366,25 +472,32 @@ describe('Panneau « Document corrigé »', () => {
     server.sequence = [exportDto('READY', { expiresAt: '2026-01-01T00:00:00.000Z' })];
     renderPanel(decided());
     expect(await screen.findByText(/n’est plus disponible/)).toBeInTheDocument();
-    expect(downloadButton()).toBeNull();
+    expect(screen.queryByRole('button', { name: /version précédente/ })).toBeNull();
+    // Le bouton demande un nouveau document ; l'expiré n'est jamais téléchargé.
+    await clickMain();
+    expect(server.createCalls).toBe(1);
+    await new Promise((r) => setTimeout(r, 50));
+    nothingDownloaded();
   });
 
-  it('fichier d’origine supprimé : génération impossible, explication', async () => {
+  it('fichier d’origine supprimé : téléchargement impossible, explication', async () => {
     server.fileAvailable = false;
     renderPanel(decided());
     expect(await screen.findByText(/fichier d’origine a été supprimé/)).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Générer/ })).toBeNull();
+    expect(mainButton()).toBeNull();
   });
 
-  it('après rechargement : l’export suivi est relu, sans nouvelle demande', async () => {
+  it('après rechargement : l’export suivi est relu, sans nouvelle demande ni téléchargement automatique', async () => {
     window.sessionStorage.setItem(
       'wordfix.export.ana_1',
       JSON.stringify({ id: 'exp_1', signature: signatureOf(decided()) }),
     );
     server.sequence = [exportDto('READY')];
     renderPanel(decided());
-    expect(await screen.findByText(/Document corrigé prêt/)).toBeInTheDocument();
+    expect(await screen.findByText(/Document prêt/)).toBeInTheDocument();
     expect(server.createCalls).toBe(0);
+    nothingDownloaded();
+    expect(mainButton()).toBeEnabled();
   });
 
   it('export suivi introuvable (404) : oublié, une nouvelle demande est possible', async () => {
@@ -394,9 +507,7 @@ describe('Panneau « Document corrigé »', () => {
     );
     server.getError = new ApiError('NOT_FOUND', 'Introuvable', 404);
     renderPanel(decided());
-    expect(
-      await screen.findByRole('button', { name: 'Générer le document corrigé' }),
-    ).toBeEnabled();
+    expect(await screen.findByRole('button', { name: DOWNLOAD_LABEL })).toBeEnabled();
     await waitFor(() => expect(window.sessionStorage.getItem('wordfix.export.ana_1')).toBeNull());
   });
 
@@ -410,11 +521,10 @@ describe('Panneau « Document corrigé »', () => {
     track();
     server.holdExport = true;
     renderPanel(decided());
-    expect(await screen.findByText('Chargement du document corrigé…')).toBeInTheDocument();
+    expect(await screen.findByText('Chargement de votre document corrigé…')).toBeInTheDocument();
     // Le fichier d'origine est confirmé disponible : seul l'état inconnu bloque.
     await waitFor(() => expect(server.getCalls).toBeGreaterThan(0));
-    expect(screen.queryByRole('button', { name: /Générer|Réessayer/ })).toBeNull();
-    expect(downloadButton()).toBeNull();
+    expect(screen.queryByRole('button', { name: /Télécharger|Réessayer/ })).toBeNull();
   });
 
   it('état de l’export suivi indisponible (erreur passagère) : message, aucune nouvelle demande, reprise', async () => {
@@ -429,8 +539,7 @@ describe('Panneau « Document corrigé »', () => {
       await screen.findByText(/L’état de votre document corrigé n’a pas pu être récupéré/),
     ).toBeInTheDocument();
     expect(screen.getByText(/Aucune nouvelle demande n’est envoyée/)).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Générer|Réessayer$/ })).toBeNull();
-    expect(downloadButton()).toBeNull();
+    expect(screen.queryByRole('button', { name: /Télécharger|Réessayer$/ })).toBeNull();
     // L'export suivi n'est pas oublié (ce n'est pas un 404).
     expect(window.sessionStorage.getItem('wordfix.export.ana_1')).not.toBeNull();
 
@@ -438,20 +547,20 @@ describe('Panneau « Document corrigé »', () => {
     server.getError = null;
     server.sequence = [exportDto('READY')];
     await userEvent.click(screen.getByRole('button', { name: 'Récupérer l’état maintenant' }));
-    expect(await screen.findByText(/Document corrigé prêt/)).toBeInTheDocument();
+    expect(await screen.findByText(/Document prêt/)).toBeInTheDocument();
     expect(server.createCalls).toBe(0);
   });
 
-  it('disponibilité du fichier d’origine pas encore confirmée : génération désactivée', async () => {
+  it('disponibilité du fichier d’origine pas encore confirmée : bouton désactivé', async () => {
     server.holdDocument = true;
     renderPanel(decided());
     expect(
       await screen.findByText('Vérification de la disponibilité de votre fichier d’origine…'),
     ).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Générer le document corrigé' })).toBeDisabled();
+    expect(mainButton()).toBeDisabled();
   });
 
-  it('vérification du fichier d’origine impossible : message clair, génération désactivée jusqu’à confirmation', async () => {
+  it('vérification du fichier d’origine impossible : message clair, bouton désactivé jusqu’à confirmation', async () => {
     server.documentError = new ApiError('NETWORK_ERROR', 'Connexion impossible.', 0);
     renderPanel(decided());
     expect(
@@ -459,18 +568,16 @@ describe('Panneau « Document corrigé »', () => {
         /La disponibilité de votre fichier d’origine n’a pas pu être vérifiée/,
       ),
     ).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Générer le document corrigé' })).toBeDisabled();
+    expect(mainButton()).toBeDisabled();
 
     server.documentError = null;
     await userEvent.click(screen.getByRole('button', { name: 'Vérifier maintenant' }));
-    await waitFor(() =>
-      expect(screen.getByRole('button', { name: 'Générer le document corrigé' })).toBeEnabled(),
-    );
+    await waitFor(() => expect(mainButton()).toBeEnabled());
     expect(screen.queryByText(/n’a pas pu être vérifiée/)).toBeNull();
     expect(server.createCalls).toBe(0);
   });
 
-  it('« Embellir » sans correction choisie : génération possible, options envoyées, compte rendu', async () => {
+  it('mise en forme seule (aucune correction choisie) : téléchargement possible, options envoyées, compte rendu', async () => {
     server.sequence = [
       exportDto('READY', {
         requestedCount: 0,
@@ -480,18 +587,20 @@ describe('Panneau « Document corrigé »', () => {
       }),
     ];
     renderPanel([issue('iss_c', 'ignored')]);
-    const button = await screen.findByRole('button', { name: 'Générer le document corrigé' });
-    expect(button).toBeDisabled();
+    expect(await screen.findByRole('button', { name: DOWNLOAD_LABEL })).toBeDisabled();
     await userEvent.click(screen.getByRole('checkbox', { name: /Typographie française/ }));
-    expect(screen.getByText(/seules les améliorations « Embellir » cochées/)).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: 'Générer le document corrigé' }));
+    expect(screen.getByText('Mise en forme').nextSibling).toHaveTextContent(
+      'Typographie française',
+    );
+    await clickMain();
     expect(server.createOptions).toEqual([{ typography: true, layout: false }]);
-    expect(await screen.findByText('Document embelli prêt.')).toBeInTheDocument();
-    expect(screen.getByText('Embellissement : 3 corrections typographiques.')).toBeInTheDocument();
-    expect(downloadButton()).toBeEnabled();
+    expect(await screen.findByText('Document prêt : mise en forme appliquée.')).toBeInTheDocument();
+    expect(screen.getByText('Mise en forme : 3 corrections typographiques.')).toBeInTheDocument();
+    await waitFor(() => expect(saved.files).toHaveLength(1));
+    expect(mainButton()).toBeEnabled();
   });
 
-  it('« Embellir » sur un document déjà conforme : message clair, aucun téléchargement', async () => {
+  it('mise en forme sur un document déjà conforme : message clair, aucun téléchargement', async () => {
     server.sequence = [
       exportDto('FAILED', {
         requestedCount: 0,
@@ -500,26 +609,119 @@ describe('Panneau « Document corrigé »', () => {
       }),
     ];
     renderPanel([]);
-    await userEvent.click(await screen.findByRole('checkbox', { name: /Mise en page harmonisée/ }));
-    await userEvent.click(screen.getByRole('button', { name: 'Générer le document corrigé' }));
+    await userEvent.click(
+      await screen.findByRole('checkbox', { name: /Harmonisation de la présentation/ }),
+    );
+    await clickMain();
     expect(
       await screen.findByText(/n'avait besoin d'aucune des améliorations/),
     ).toBeInTheDocument();
-    expect(downloadButton()).toBeNull();
+    nothingDownloaded();
+    expect(mainButton()).toBeNull();
     expect(screen.queryByRole('button', { name: 'Réessayer' })).toBeNull();
   });
 
   it('option changée après la génération : document signalé comme périmé', async () => {
     server.sequence = [exportDto('READY')];
     renderPanel(decided());
+    await clickMain();
+    await screen.findByText(/Document prêt/);
     await userEvent.click(
-      await screen.findByRole('button', { name: 'Générer le document corrigé' }),
+      screen.getByRole('checkbox', { name: /Harmonisation de la présentation/ }),
     );
-    await screen.findByText(/Document corrigé prêt/);
-    await userEvent.click(screen.getByRole('checkbox', { name: /Mise en page harmonisée/ }));
     expect(
       await screen.findByText(/Vos choix ont changé depuis la génération/),
     ).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Générer une nouvelle version' })).toBeEnabled();
+    expect(mainButton()).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Télécharger la version précédente' })).toBeEnabled();
+  });
+});
+
+describe('Corrections fiables au téléchargement', () => {
+  /** Une correction fiable, une incertaine, un point à vérifier, une décision antérieure. */
+  const mixed = () => [
+    issue('iss_r', 'open'),
+    issue('iss_u', 'open', { nature: 'suggestion', confidence: 'medium' }),
+    issue('iss_v', 'open', { nature: 'verify', suggestion: null }),
+    issue('iss_e', 'edited', { userText: 'ma version' }),
+  ];
+
+  it('case cochée par défaut : « Tout corriger » puis export ; les points incertains ne sont jamais acceptés', async () => {
+    server.sequence = [exportDto('READY')];
+    renderLive(mixed());
+    const include = await screen.findByRole('checkbox', {
+      name: 'Inclure les corrections fiables (1)',
+    });
+    expect(include).toBeChecked();
+    await clickMain();
+    await waitFor(() => expect(server.createCalls).toBe(1));
+    expect(server.acceptCalls).toBe(1);
+    // Seule la correction fiable est acceptée ; la décision antérieure est conservée.
+    expect(server.issues.map((i) => [i.id, i.status])).toEqual([
+      ['iss_r', 'accepted'],
+      ['iss_u', 'open'],
+      ['iss_v', 'open'],
+      ['iss_e', 'edited'],
+    ]);
+    // Annulable comme « Tout corriger » (même lot gardé dans l'onglet).
+    expect(JSON.parse(window.sessionStorage.getItem('wordfix.bulk.ana_1') ?? '[]')).toEqual([
+      'iss_r',
+    ]);
+    expect(await screen.findByText(/1 correction fiable acceptée/)).toBeInTheDocument();
+    await waitFor(() => expect(saved.files).toHaveLength(1));
+  });
+
+  it('case décochée : aucune acceptation automatique', async () => {
+    server.sequence = [exportDto('READY')];
+    renderLive(mixed());
+    await userEvent.click(
+      await screen.findByRole('checkbox', { name: 'Inclure les corrections fiables (1)' }),
+    );
+    await clickMain();
+    await waitFor(() => expect(server.createCalls).toBe(1));
+    expect(server.acceptCalls).toBe(0);
+    expect(server.issues.find((i) => i.id === 'iss_r')?.status).toBe('open');
+  });
+
+  it('acceptation refusée par le serveur : message, aucun export demandé', async () => {
+    server.acceptError = new ApiError('NETWORK_ERROR', 'Connexion impossible.', 0);
+    renderLive(mixed());
+    await clickMain();
+    expect(await screen.findByText('Connexion impossible.')).toBeInTheDocument();
+    expect(server.createCalls).toBe(0);
+    nothingDownloaded();
+  });
+
+  it('seules des corrections fiables en attente : le téléchargement est possible (case cochée)', async () => {
+    server.sequence = [exportDto('READY')];
+    renderLive([issue('iss_r', 'open')]);
+    const button = await screen.findByRole('button', { name: DOWNLOAD_LABEL });
+    await waitFor(() => expect(button).toBeEnabled());
+    await userEvent.click(
+      screen.getByRole('checkbox', { name: /Inclure les corrections fiables/ }),
+    );
+    expect(mainButton()).toBeDisabled();
+  });
+
+  it('points à vérifier manuellement : signalés, sans bloquer le téléchargement', async () => {
+    renderLive(mixed());
+    expect(
+      await screen.findByText(/1 point demande une vérification de votre part/),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/ne bloque pas le téléchargement/)).toBeInTheDocument();
+    await waitFor(() => expect(mainButton()).toBeEnabled());
+  });
+
+  it('document prêt mais corrections fiables encore en attente : un clic prépare une version à jour', async () => {
+    window.sessionStorage.setItem(
+      'wordfix.export.ana_1',
+      JSON.stringify({ id: 'exp_1', signature: signatureOf(mixed()) }),
+    );
+    server.sequence = [exportDto('READY')];
+    renderLive(mixed());
+    await screen.findByText(/Document prêt/);
+    await clickMain();
+    await waitFor(() => expect(server.createCalls).toBe(1));
+    expect(server.acceptCalls).toBe(1);
   });
 });
