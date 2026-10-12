@@ -64,20 +64,21 @@ Ouvrez <http://localhost:3000> et cliquez sur « Essayer avec un rapport de stag
 
 ## Commandes
 
-| Commande                                       | Effet                                                                            |
-| ---------------------------------------------- | -------------------------------------------------------------------------------- |
-| `pnpm dev`                                     | `shared` en continu, API (port 4000), worker, service d'export, site (port 3000) |
-| `pnpm build`                                   | Compile tous les paquets                                                         |
-| `pnpm check`                                   | Types + lint + formatage (à lancer avant chaque PR)                              |
-| `pnpm test`                                    | Tests unitaires (API, moteur, site)                                              |
-| `pnpm test:integration`                        | API + file + worker + moteur contre PostgreSQL et Redis réels                    |
-| `pnpm test:e2e`                                | Parcours complets dans Chromium (après `pnpm build`, API arrêtée)                |
-| `pnpm infra:up` / `pnpm infra:down`            | Démarre / arrête PostgreSQL et Redis                                             |
-| `pnpm db:validate` / `db:check` / `db:deploy`  | Schéma Prisma, connexion à la base, application des migrations                   |
-| `pnpm db:migrate`                              | Crée une migration après une modification du schéma (développement)              |
-| `pnpm --filter @wordfix/api fixtures:generate` | Écrit le corpus de test (13 types de documents) dans `apps/api/fixtures/`        |
-| `pnpm --filter @wordfix/api eval:quality`      | Mesure la qualité de l'IA réelle sur des fautes connues (stack démarrée)         |
-| `pnpm --filter @wordfix/api sample:generate`   | Régénère le rapport d'exemple de la page d'accueil                               |
+| Commande                                       | Effet                                                                             |
+| ---------------------------------------------- | --------------------------------------------------------------------------------- |
+| `pnpm dev`                                     | `shared` en continu, API (port 4000), worker, service d'export, site (port 3000)  |
+| `pnpm build`                                   | Compile tous les paquets                                                          |
+| `pnpm check`                                   | Types + lint + formatage (à lancer avant chaque PR)                               |
+| `pnpm test`                                    | Tests unitaires (API, moteur, site)                                               |
+| `pnpm test:integration`                        | API + file + worker + moteur contre PostgreSQL et Redis réels                     |
+| `pnpm test:process`                            | Processus enfant d'export (sans base ni Redis ; aussi exécuté sous Windows en CI) |
+| `pnpm test:e2e`                                | Parcours complets dans Chromium (après `pnpm build`, API arrêtée)                 |
+| `pnpm infra:up` / `pnpm infra:down`            | Démarre / arrête PostgreSQL et Redis                                              |
+| `pnpm db:validate` / `db:check` / `db:deploy`  | Schéma Prisma, connexion à la base, application des migrations                    |
+| `pnpm db:migrate`                              | Crée une migration après une modification du schéma (développement)               |
+| `pnpm --filter @wordfix/api fixtures:generate` | Écrit le corpus de test (13 types de documents) dans `apps/api/fixtures/`         |
+| `pnpm --filter @wordfix/api eval:quality`      | Mesure la qualité de l'IA réelle sur des fautes connues (stack démarrée)          |
+| `pnpm --filter @wordfix/api sample:generate`   | Régénère le rapport d'exemple de la page d'accueil                                |
 
 ## Configuration
 

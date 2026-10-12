@@ -8,3 +8,4 @@ apps/api/src/generated
 apps/web/next-env.d.ts
 dist-worker
 dist-export
+apps/api/test-results

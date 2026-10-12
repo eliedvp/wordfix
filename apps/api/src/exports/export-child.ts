@@ -32,13 +32,24 @@ function problemOf(error: unknown): string {
   return 'unexpected';
 }
 
+let replied = false;
+
+/**
+ * Réponse au parent. L'enfant ne se termine pas de lui-même : le parent mesure son pic
+ * de mémoire une fois le message entièrement reçu (sérialisation et envoi compris),
+ * puis lui envoie un message de libération, qui le termine.
+ */
 function reply(response: ChildResponse): void {
-  process.send?.(response, () => process.exit(0));
+  replied = true;
+  process.send?.(response, (error: Error | null) => {
+    if (error) process.exit(1);
+  });
+  process.once('message', () => process.exit(0));
 }
 
-// Service d'export arrêté (canal fermé) : l'enfant ne doit pas survivre en orphelin,
+// Canal fermé (service d'export arrêté) : l'enfant ne doit pas survivre en orphelin,
 // sinon il occuperait encore de la mémoire quand le service redémarre et relance l'export.
-process.once('disconnect', () => process.exit(1));
+process.once('disconnect', () => process.exit(replied ? 0 : 1));
 
 process.once('message', (message: ChildRequest) => {
   const source = Buffer.from(

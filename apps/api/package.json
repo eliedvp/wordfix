@@ -17,6 +17,7 @@
     "lint": "eslint .",
     "test": "vitest run --project unit",
     "test:integration": "vitest run --project integration",
+    "test:process": "vitest run --project process --reporter=verbose --reporter=json --outputFile.json=test-results/process.json && tsx scripts/check-process-report.ts test-results/process.json",
     "test:watch": "vitest --project unit",
     "prisma:validate": "prisma validate",
     "prisma:generate": "prisma generate",

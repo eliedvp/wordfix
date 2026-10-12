@@ -38,6 +38,13 @@ import {
  * récupération des exports bloqués et purge.
  */
 
+/**
+ * Contrôles de la mémoire de l'enfant par WordFix : seulement là où le pic est lisible
+ * (Linux, /proc), comme dans le superviseur. Ailleurs (Windows, macOS), les tests qui
+ * en dépendent sont signalés « ignorés », jamais comptés comme réussis.
+ */
+const MEMORY_CHECKS = existsSync('/proc/self/status');
+
 const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 const STORAGE = process.env.STORAGE_LOCAL_DIR ?? '';
 type Agent = ReturnType<typeof request.agent>;
@@ -398,18 +405,26 @@ describe('Document corrigé : limites du processus enfant', () => {
     }
   }
 
-  it('mémoire dépassée : processus enfant arrêté, export en échec, aucun fichier', async () => {
-    const { done, documentId } = await exportWithLimits({ memoryLimitMb: 40, timeoutMs: 120_000 });
-    expect(done).toMatchObject({
-      status: 'FAILED',
-      errorCode: 'EXPORT_TOO_LARGE',
-      appliedCount: 0,
-    });
-    expect(existsSync(resolve(STORAGE, `documents/${documentId}/exports`))).toBe(false);
-  }, 120_000);
+  it.runIf(MEMORY_CHECKS)(
+    'mémoire dépassée : processus enfant arrêté, export en échec, aucun fichier',
+    async () => {
+      const { done, documentId } = await exportWithLimits({
+        memoryLimitMb: 40,
+        timeoutMs: 120_000,
+      });
+      expect(done).toMatchObject({
+        status: 'FAILED',
+        errorCode: 'EXPORT_TOO_LARGE',
+        appliedCount: 0,
+      });
+      expect(existsSync(resolve(STORAGE, `documents/${documentId}/exports`))).toBe(false);
+    },
+    120_000,
+  );
 
   it('délai dépassé : processus enfant arrêté, export en échec', async () => {
-    const { done } = await exportWithLimits({ memoryLimitMb: 4096, timeoutMs: 100 });
+    // 1 ms : aucun enfant ne peut terminer dans ce délai, quelle que soit la machine.
+    const { done } = await exportWithLimits({ memoryLimitMb: 4096, timeoutMs: 1 });
     expect(done).toMatchObject({ status: 'FAILED', errorCode: 'EXPORT_TIMEOUT', appliedCount: 0 });
   }, 120_000);
 });

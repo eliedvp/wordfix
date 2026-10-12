@@ -69,6 +69,9 @@ jobs:
       - name: Tests d'intégration (PostgreSQL + Redis)
         run: pnpm test:integration
 
+      - name: Processus d'export (sans base ni Redis)
+        run: pnpm test:process
+
       - name: Build
         run: pnpm build
 
@@ -84,6 +87,43 @@ jobs:
           name: playwright-report
           path: apps/web/playwright-report
           retention-days: 7
+
+  # Superviseur du processus d'export et protocole parent-enfant sous Windows : vrais
+  # processus enfants, sans base ni Redis (les machines Windows n'acceptent pas les
+  # conteneurs de service). Les tests de contrôle mémoire, propres à Linux (/proc), y
+  # sont ignorés ; le contrôle du rapport refuse tout autre test ignoré ou en échec.
+  export-process-windows:
+    name: Processus d'export sous Windows
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - run: corepack enable
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Paquet partagé
+        run: pnpm --filter @wordfix/shared build
+      - name: Superviseur et protocole parent-enfant
+        working-directory: apps/api
+        run: pnpm exec vitest run --project process --reporter=verbose --reporter=json --outputFile.json=test-results/process.json
+      # Toujours, même après un échec : décompte (exécutés, réussis, échoués, ignorés)
+      # dans le résumé du job et en annotation ; échec si un test est en échec, ou
+      # ignoré alors qu'il doit s'exécuter ici, ou si le rapport est absent.
+      - name: Contrôle du rapport et résumé
+        if: always()
+        working-directory: apps/api
+        run: pnpm exec tsx scripts/check-process-report.ts test-results/process.json
+      - name: Rapport des tests de processus (artefact)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: process-tests-windows
+          path: apps/api/test-results/process.json
+          if-no-files-found: ignore
+          retention-days: 14
 
   # Les étapes du README, exactement : Docker Compose, Prisma, démarrage de l'API.
   infra:
