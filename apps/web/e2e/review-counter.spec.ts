@@ -20,6 +20,10 @@ test('compteur « points traités » : décisions, relecture refusée, filtres, 
   await page.getByRole('button', { name: 'Essayer avec un rapport de stage d’exemple' }).click();
   await page.getByRole('button', { name: /Lancer l’analyse/ }).click();
   await expect(page.getByText('sur 100')).toBeVisible({ timeout: 30_000 });
+  await page
+    .getByRole('navigation', { name: 'Actions' })
+    .getByRole('button', { name: 'Corriger' })
+    .click();
   const analysisId = /ana_[0-9a-z]{20}/.exec(page.url())?.[0] ?? '';
   const counter = page.getByText(/\d+ \/ \d+ points traités/);
   await expect(counter).toHaveText(/^0 \/ \d+ points traités$/);

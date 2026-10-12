@@ -13,7 +13,7 @@ async function documentText(file: Buffer): Promise<string> {
 const SAMPLE = new URL('../public/exemple/rapport-de-stage-exemple.docx', import.meta.url);
 
 test.describe('Parcours complet du MVP', () => {
-  test('import, analyse, Tout corriger (avec annulation), Embellir, téléchargement', async ({
+  test('import, analyse, Tout corriger (avec annulation), mise en forme, téléchargement', async ({
     page,
   }) => {
     // Import et analyse.
@@ -22,7 +22,9 @@ test.describe('Parcours complet du MVP', () => {
     await page.getByRole('button', { name: /Lancer l’analyse \(\d+ pages?\)/ }).click();
     await expect(page.getByText('sur 100')).toBeVisible({ timeout: 30_000 });
 
-    // Tout corriger : corrections sûres acceptées en une action, puis annulées, puis refaites.
+    // Tout corriger (panneau « Corriger ») : accepté en une action, annulé, puis refait.
+    const actions = page.getByRole('navigation', { name: 'Actions' });
+    await actions.getByRole('button', { name: 'Corriger' }).click();
     const quickFix = page.getByRole('region', { name: 'Correction rapide' });
     const fixAll = quickFix.getByRole('button', { name: /^Tout corriger \(\d+\)$/ });
     await expect(fixAll).toBeVisible();
@@ -40,21 +42,35 @@ test.describe('Parcours complet du MVP', () => {
     await quickFix.getByRole('button', { name: `Tout corriger (${count})` }).click();
     await expect(page.getByText(new RegExp(`^${count} / \\d+ points traités`))).toBeVisible();
 
-    // Embellir + document corrigé.
-    const panel = page.getByRole('region', { name: 'Document corrigé' });
-    await panel.getByRole('checkbox', { name: /Typographie française/ }).check();
-    await panel.getByRole('checkbox', { name: /Mise en page harmonisée/ }).check();
-    await panel.getByRole('button', { name: 'Générer le document corrigé' }).click();
+    // Mise en forme (facultative), puis téléchargement en un clic.
+    await actions.getByRole('button', { name: 'Mise en forme' }).click();
+    const formatting = page.getByRole('region', { name: 'Mise en forme' });
+    // Structure du rapport d'exemple : présence (API) distincte de la conformité.
+    const row = (label: string) =>
+      formatting.getByRole('listitem').filter({ hasText: new RegExp(`^${label}`) });
+    await expect(row('Numérotation des titres')).toContainText('titres numérotés dans le texte');
+    await expect(row('Numérotation des titres')).toContainText('Contrôlé : 1 écart relevé');
+    await expect(row('Sommaire et titres')).toContainText('Aucun sommaire Word détecté');
+    await expect(row('Sommaire et titres')).toContainText('Non applicable');
+    await expect(row('Sommaire et titres')).not.toContainText('Contrôlé');
+    await expect(row('Titres mis en forme')).toContainText('reconnus par Word');
+    // La pagination n'est jamais présentée comme vérifiée.
+    await expect(row('Pagination')).toContainText('Non vérifiée');
+    await expect(row('Pagination')).toContainText('ne recalcule pas la pagination');
+    await formatting.getByRole('checkbox', { name: /Typographie française/ }).check();
+    await formatting.getByRole('checkbox', { name: /Harmonisation de la présentation/ }).check();
+    await actions.getByRole('button', { name: 'Télécharger les modifications' }).click();
+    const panel = page.getByRole('region', { name: 'Télécharger les modifications' });
     await expect(
-      panel.getByText(
-        new RegExp(`Document corrigé prêt : \\d+ sur ${count} corrections? appliquées?`),
-      ),
-    ).toBeVisible({ timeout: 30_000 });
-    await expect(panel.getByText(/^Embellissement : /)).toBeVisible();
-
-    const downloading = page.waitForEvent('download');
-    await panel.getByRole('button', { name: 'Télécharger le document corrigé' }).click();
+      panel.getByText('Typographie française · Harmonisation de la présentation'),
+    ).toBeVisible();
+    const downloading = page.waitForEvent('download', { timeout: 30_000 });
+    await panel.getByRole('button', { name: 'Télécharger les modifications' }).click();
     const download = await downloading;
+    await expect(
+      panel.getByText(new RegExp(`Document prêt : \\d+ sur ${count} corrections? appliquées?`)),
+    ).toBeVisible();
+    await expect(panel.getByText(/^Mise en forme : /)).toBeVisible();
     expect(download.suggestedFilename()).toMatch(/\(corrigé\)\.docx$/);
     const file = readFileSync(await download.path());
     const original = readFileSync(SAMPLE);

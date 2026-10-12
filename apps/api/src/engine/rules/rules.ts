@@ -2,6 +2,12 @@ import type { Block, DocumentModel } from '@wordfix/shared';
 import { createLanguageEngine } from '../language/language-engine.js';
 import type { GrammarFindings } from '../language/types.js';
 import type { CandidateIssue } from '../types.js';
+import {
+  createNumberingTracker,
+  isComparableTocEntry,
+  normalizeTitle,
+  TYPED_HEADING_NUMBER,
+} from './structure-criteria.js';
 
 /**
  * Règles déterministes : gratuites, instantanées et fiables. Les règles de
@@ -46,28 +52,17 @@ function issue(
 
 function headingNumbering(model: DocumentModel): CandidateIssue[] {
   const out: CandidateIssue[] = [];
-  const last = new Map<number, number[]>();
+  const track = createNumberingTracker();
 
   for (const block of model.blocks) {
     if (block.kind !== 'heading') continue;
-    const match = /^\s*(\d+(?:\.\d+)*)\.?\s+\S/.exec(block.text);
+    const match = TYPED_HEADING_NUMBER.exec(block.text);
     if (!match?.[1]) continue;
-    const parts = match[1].split('.').map(Number);
-    const depth = parts.length;
-
-    // Un titre de niveau supérieur réinitialise la numérotation des niveaux inférieurs.
-    for (const key of [...last.keys()]) if (key > depth) last.delete(key);
-
-    const previous = last.get(depth);
-    const sameParent =
-      previous !== undefined && previous.slice(0, -1).join('.') === parts.slice(0, -1).join('.');
-    const current = parts.at(-1) ?? 0;
-    const expected = sameParent ? (previous.at(-1) ?? 0) + 1 : null;
-    last.set(depth, parts);
+    const { previous, expected, current } = track(match[1]);
 
     if (expected === null || current === expected) continue;
     const previousLabel = previous?.join('.') ?? '';
-    const expectedLabel = [...parts.slice(0, -1), expected].join('.');
+    const expectedLabel = [...match[1].split('.').map(Number).slice(0, -1), expected].join('.');
     out.push(
       issue({
         category: 'structure',
@@ -234,14 +229,6 @@ function terminologyVariants(model: DocumentModel): CandidateIssue[] {
 
 // --- Sommaire qui ne correspond plus aux titres -------------------------------
 
-function normalizeTitle(text: string): string {
-  return text
-    .replace(/[\t.…\s]+\d+\s*$/u, '') // numéro de page en fin d'entrée
-    .replace(/\s+/g, ' ')
-    .trim()
-    .toLowerCase();
-}
-
 function tocMismatch(model: DocumentModel): CandidateIssue[] {
   const entries = model.blocks.filter((b) => b.kind === 'toc_entry');
   const headings = model.blocks
@@ -251,8 +238,8 @@ function tocMismatch(model: DocumentModel): CandidateIssue[] {
 
   const out: CandidateIssue[] = [];
   for (const entry of entries) {
+    if (!isComparableTocEntry(entry.text)) continue;
     const title = normalizeTitle(entry.text);
-    if (title.length < 3 || /^(table des matières|sommaire)$/.test(title)) continue;
     if (headings.some((h) => h === title || h.startsWith(title) || title.startsWith(h))) continue;
     const visible = entry.text.replace(/[\t.…\s]+\d+\s*$/u, '').trim();
     const start = entry.text.indexOf(visible);

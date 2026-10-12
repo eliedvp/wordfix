@@ -24,21 +24,25 @@ function advice(analysis: AnalysisDto): string {
   return 'Parcourez les suggestions : à vous de choisir celles qui améliorent votre texte.';
 }
 
+/**
+ * Partie supérieure de l'écran des résultats : score, nom du document, compteurs par
+ * nature (qui filtrent les points) et progression. Les avertissements peuvent être
+ * affichés ailleurs (panneau « Informations sur l'analyse ») : `showWarnings={false}`.
+ */
 export function SummaryBand({
   analysis,
   activeNatures,
   onToggleNature,
+  showWarnings = true,
 }: {
   analysis: AnalysisDto;
   activeNatures: IssueNature[];
   onToggleNature: (nature: IssueNature) => void;
+  showWarnings?: boolean;
 }) {
   const [showScore, setShowScore] = useState(false);
   // Analyse sans IA : le dire à côté du score, et en premier dans les avertissements.
   const aiDisabled = analysis.warnings.includes('AI_DISABLED');
-  const warnings = [...analysis.warnings].sort(
-    (a, b) => Number(b === 'AI_DISABLED') - Number(a === 'AI_DISABLED'),
-  );
   const reviewed =
     analysis.issueCount === 0 ? 100 : (analysis.reviewedCount / analysis.issueCount) * 100;
 
@@ -148,31 +152,49 @@ export function SummaryBand({
         </p>
       </div>
 
-      {warnings.length > 0 ? (
-        <ul className="space-y-2 lg:col-span-2">
-          {warnings.map((warning) => (
-            <li
-              key={warning}
-              className="rounded-control flex items-start gap-2 border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-900"
-            >
-              <TriangleAlert className="mt-0.5 size-4 shrink-0" aria-hidden />
-              <div>
-                {WARNING_TEXTS[warning]}
-                {warning === 'AI_CHECKS_SKIPPED' && analysis.skippedAiChecks.length > 0 ? (
-                  <ul
-                    className="mt-1.5 list-disc space-y-0.5 pl-4"
-                    aria-label="Vérifications IA non effectuées"
-                  >
-                    {analysis.skippedAiChecks.map((item) => (
-                      <li key={item.check}>{skippedAiCheckText(item)}</li>
-                    ))}
-                  </ul>
-                ) : null}
-              </div>
-            </li>
-          ))}
-        </ul>
-      ) : null}
+      {showWarnings ? <AnalysisWarnings analysis={analysis} className="lg:col-span-2" /> : null}
     </section>
+  );
+}
+
+/**
+ * Avertissements de l'analyse (IA désactivée en premier), avec le détail des
+ * vérifications IA non effectuées. Rien n'est affiché s'il n'y en a aucun.
+ */
+export function AnalysisWarnings({
+  analysis,
+  className,
+}: {
+  analysis: AnalysisDto;
+  className?: string;
+}) {
+  const warnings = [...analysis.warnings].sort(
+    (a, b) => Number(b === 'AI_DISABLED') - Number(a === 'AI_DISABLED'),
+  );
+  if (warnings.length === 0) return null;
+  return (
+    <ul className={cn('space-y-2', className)}>
+      {warnings.map((warning) => (
+        <li
+          key={warning}
+          className="rounded-control flex items-start gap-2 border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-900"
+        >
+          <TriangleAlert className="mt-0.5 size-4 shrink-0" aria-hidden />
+          <div>
+            {WARNING_TEXTS[warning]}
+            {warning === 'AI_CHECKS_SKIPPED' && analysis.skippedAiChecks.length > 0 ? (
+              <ul
+                className="mt-1.5 list-disc space-y-0.5 pl-4"
+                aria-label="Vérifications IA non effectuées"
+              >
+                {analysis.skippedAiChecks.map((item) => (
+                  <li key={item.check}>{skippedAiCheckText(item)}</li>
+                ))}
+              </ul>
+            ) : null}
+          </div>
+        </li>
+      ))}
+    </ul>
   );
 }

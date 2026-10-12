@@ -24,14 +24,37 @@ test.describe('Parcours principal', () => {
       ).toBeVisible();
     }
 
-    // Appliquer une correction : copiée, comptée comme traitée.
+    // Aucun panneau ouvert au chargement ; « Corriger » ouvre la liste et le détail.
+    const actions = page.getByRole('navigation', { name: 'Actions' });
+    for (const name of [
+      'Informations sur l’analyse',
+      'Corriger',
+      'Mise en forme',
+      'Télécharger les modifications',
+    ]) {
+      await expect(actions.getByRole('button', { name })).toHaveAttribute('aria-expanded', 'false');
+    }
+    await expect(page.getByRole('article', { name: 'Détail du point' })).toBeHidden();
+    await actions.getByRole('button', { name: 'Corriger' }).click();
+
+    // « Copier » : explicite, sans rien décider.
     const detail = page.getByRole('article', { name: 'Détail du point' });
     await expect(detail.getByText('Erreur', { exact: true })).toBeVisible();
+    await detail.getByRole('button', { name: 'Copier' }).click();
+    const copied = await page.evaluate(() => navigator.clipboard.readText());
+    expect(copied).not.toBe('');
+    await expect(page.getByText(/0 \/ \d+ points traités/)).toBeVisible();
+
+    // Appliquer une correction : comptée comme traitée, sans copie automatique
+    // (un texte témoin posé dans le presse-papiers reste en place).
+    await page.evaluate(() => navigator.clipboard.writeText('témoin WordFix'));
     await detail.getByRole('button', { name: 'Appliquer la correction' }).click();
     const toasts = page.getByRole('region', { name: /Notifications/ });
-    await expect(toasts.getByText('Correction copiée. Reportez-la dans Word.')).toBeVisible();
-    expect(await page.evaluate(() => navigator.clipboard.readText())).not.toBe('');
+    await expect(
+      toasts.getByText('Correction acceptée : elle sera appliquée au document téléchargé.'),
+    ).toBeVisible();
     await expect(page.getByText(/1 \/ \d+ points traités/)).toBeVisible();
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('témoin WordFix');
 
     // Ignorer au clavier, puis annuler.
     await page.keyboard.press('i');
@@ -49,7 +72,8 @@ test.describe('Parcours principal', () => {
 
     // Historique : document terminé, reprise, suppression définitive.
     await page.getByRole('link', { name: 'Mes documents' }).click();
-    await expect(page.getByText('Terminé')).toBeVisible();
+    await expect(page).toHaveURL(/\/historique$/);
+    await expect(page.getByText('Terminé', { exact: true })).toBeVisible();
     await page.getByRole('link', { name: 'Reprendre' }).click();
     await expect(page).toHaveURL(analysisUrl);
     await page.goBack();

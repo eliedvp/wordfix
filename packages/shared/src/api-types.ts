@@ -2,6 +2,7 @@
  * Contrat des réponses de l'API, partagé par le backend (qui les produit) et le
  * frontend (qui les consomme). Les dates sont des chaînes ISO 8601.
  */
+import type { PageMethod } from './document-model.js';
 import type { ErrorCode } from './errors.js';
 import type {
   AnalysisStatus,
@@ -182,6 +183,42 @@ export interface IssueListDto {
   total: number;
   /** Texte des paragraphes concernés, pour afficher chaque problème dans son contexte. */
   blocks: Record<string, BlockContextDto>;
+  /**
+   * Éléments de structure présents dans le document analysé (absent d'une API antérieure ;
+   * `null` si le contenu extrait n'est plus disponible). Indique ce qui EXISTE, pas sa
+   * conformité : la conformité est donnée par les points relevés.
+   */
+  structure?: DocumentStructureDto | null;
+}
+
+/**
+ * Présence des éléments de structure contrôlés par les règles automatiques, calculée à
+ * partir du contenu extrait (aucun appel à une IA). Les critères sont ceux des règles :
+ * un titre « numéroté » ou une entrée de sommaire « comparable » est exactement ce que la
+ * règle correspondante contrôle.
+ */
+export interface DocumentStructureDto {
+  /** Titres détectés (styles Word, niveau hiérarchique, ou déduits de leur apparence). */
+  headings: number;
+  /** Titres déduits de leur apparence (sans style « Titre » ni niveau hiérarchique). */
+  inferredHeadings: number;
+  /** Titres commençant par un numéro saisi dans le texte (« 2.3 … »). */
+  numberedHeadings: number;
+  /**
+   * Titres numérotés dont le numéro est comparé au précédent du même niveau et du même
+   * parent (le premier numéro de chaque niveau n'est comparé à rien) : la règle de
+   * numérotation ne contrôle réellement que ceux-là.
+   */
+  comparedNumberedHeadings: number;
+  /** Entrées de sommaire Word détectées (champ ou styles de sommaire). */
+  tocEntries: number;
+  /** Entrées comparées aux titres (hors « Sommaire » / « Table des matières » et très courtes). */
+  comparableTocEntries: number;
+  /**
+   * Origine du nombre de pages : sauts de page enregistrés par Word lors du dernier
+   * enregistrement, ou estimation par le nombre de mots. Jamais une pagination recalculée.
+   */
+  pageMethod: PageMethod;
 }
 
 /**
