@@ -24,7 +24,14 @@ Selon le système :
 | Export normal, délai dépassé, limite suffisante, protocole parent-enfant (fin de l'enfant dans tous les cas, service arrêté brutalement)       | Exécutés (fin vérifiée par `/proc` ; un processus « zombie » compte comme terminé) | Exécutés (fin vérifiée par le signal 0)                                                                                       |
 | « Sans lecture du pic » : aucun contrôle mémoire par WordFix (limite connue)                                                                   | Exécuté (fonctionnement sans `/proc` reproduit)                                    | Exécuté                                                                                                                       |
 
-**Compatibilité Windows : pas encore validée.** Le job Windows n'a encore jamais tourné : il s'exécutera au premier envoi de la branche sur GitHub. Il vérifie en particulier `process.kill(pid, 0)` (fin d'un processus vérifiée par existence), l'arrêt forcé de l'enfant (`child.kill('SIGKILL')`) et le classement du résultat, la fermeture du canal IPC (canal nommé sous Windows) quand le service d'export meurt (`process.kill(process.pid, 'SIGKILL')` dans `test/fixtures/dying-export-service.ts`) et la fin de l'enfant après sa libération. Les tests d'intégration (base, Redis) et Playwright ne tournent pas sous Windows en CI.
+**Validation Windows : réussie (CI, commit `564307d`).** Décompte lu dans les annotations des jobs GitHub :
+
+| Système                                                             | Exécutés | Réussis | Échoués | Ignorés |
+| ------------------------------------------------------------------- | -------- | ------- | ------- | ------- |
+| Windows (`windows-latest`, job « Processus d'export sous Windows ») | 12       | 12      | 0       | 3       |
+| Linux (`ubuntu-latest`, job « Qualité et tests »)                   | 15       | 15      | 0       | 0       |
+
+Sous Windows, les 12 tests exécutés couvrent notamment `process.kill(pid, 0)` (fin d'un processus vérifiée par existence), l'arrêt forcé de l'enfant (`child.kill('SIGKILL')`) et le classement du résultat, la fermeture du canal IPC (canal nommé) quand le service d'export meurt (`process.kill(process.pid, 'SIGKILL')` dans `test/fixtures/dying-export-service.ts`) et la fin de l'enfant après sa libération. Les 3 tests ignorés sont ceux du contrôle mémoire : la surveillance mémoire fondée sur `/proc` (pic `VmHWM`) n'est pas disponible sous Windows, et WordFix n'y contrôle donc pas la mémoire de l'enfant. macOS n'est pas testé en CI. Les tests d'intégration (base, Redis) et Playwright ne tournent pas sous Windows en CI.
 
 La sécurité mémoire des exports repose donc, en production, sur Linux et sur la limite de l'environnement (1,5 Gio, à configurer et vérifier sur l'hébergement). Simulation utilisée sous Linux pour vérifier ce tableau : `existsSync` et `readFileSync` du processus de test rendus aveugles à `/proc` (`pnpm test:process` : 12 exécutés, 3 ignorés, contrôle du rapport réussi).
 
