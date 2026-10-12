@@ -106,8 +106,24 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Paquet partagé
         run: pnpm --filter @wordfix/shared build
-      - name: Superviseur et protocole parent-enfant (exécutés, ignorés, contrôle du rapport)
-        run: pnpm test:process
+      - name: Superviseur et protocole parent-enfant
+        working-directory: apps/api
+        run: pnpm exec vitest run --project process --reporter=verbose --reporter=json --outputFile.json=test-results/process.json
+      # Toujours, même après un échec : décompte (exécutés, réussis, échoués, ignorés)
+      # dans le résumé du job et en annotation ; échec si un test est en échec, ou
+      # ignoré alors qu'il doit s'exécuter ici, ou si le rapport est absent.
+      - name: Contrôle du rapport et résumé
+        if: always()
+        working-directory: apps/api
+        run: pnpm exec tsx scripts/check-process-report.ts test-results/process.json
+      - name: Rapport des tests de processus (artefact)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: process-tests-windows
+          path: apps/api/test-results/process.json
+          if-no-files-found: ignore
+          retention-days: 14
 
   # Les étapes du README, exactement : Docker Compose, Prisma, démarrage de l'API.
   infra:
