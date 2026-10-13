@@ -17,6 +17,7 @@ import {
   TriangleAlert,
 } from 'lucide-react';
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Button } from '@/components/ui/button';
 import { ApiError, NETWORK_MESSAGE } from '@/lib/api/client';
 import { api } from '@/lib/api/endpoints';
@@ -42,7 +43,12 @@ import { cn } from '@/lib/utils';
 
 const plural = (n: number, one: string, many: string) => `${n} ${n > 1 ? many : one}`;
 
-export const DOWNLOAD_LABEL = 'Télécharger les modifications';
+export const DOWNLOAD_LABEL = 'Corriger et télécharger';
+/** Repère du bouton principal (focus depuis la barre du bas ou « Aller à … »). */
+export const PRIMARY_SELECTOR = '[data-action-principale]';
+const PRIMARY = { 'data-action-principale': '' };
+/** Bouton occupé : présenté comme désactivé, sans perdre le focus. */
+const BUSY = 'aria-disabled:cursor-progress aria-disabled:opacity-60';
 export const NO_OPTIONS: ExportOptions = { typography: false, layout: false };
 
 /** Libellés des options de mise en forme (panneau « Mise en forme »). */
@@ -61,14 +67,17 @@ function messageOf(error: unknown): string {
 }
 
 /**
- * « Télécharger les modifications » : un seul bouton produit le document Word final.
+ * « Corriger et télécharger » : l'action principale de l'écran des résultats. Un seul
+ * bouton produit le document Word final.
  * - Si « Inclure les corrections fiables » est cochée, « Tout corriger » est d'abord
- *   exécuté (même règle partagée, mêmes statuts visibles, annulable dans « Corriger »).
+ *   exécuté (même règle partagée, mêmes statuts visibles, annulable dans « Revoir les corrections »).
  *   Les suggestions incertaines ne sont jamais appliquées d'office.
  * - Les corrections acceptées ou modifiées, puis la mise en forme choisie, sont
  *   appliquées à une copie du fichier ; la préparation est suivie et le fichier est
- *   téléchargé automatiquement dès qu'il est prêt (une seule fois). Le bouton relance
- *   le téléchargement si le navigateur l'a bloqué.
+ *   téléchargé automatiquement dès qu'il est prêt (une seule fois). La réussite n'est
+ *   annoncée qu'une fois le fichier reçu en entier et transmis au navigateur ; le bouton
+ *   relance le téléchargement en cas d'échec ou si le navigateur l'a bloqué.
+ * - Le récapitulatif détaillé et les options restent accessibles, repliés.
  * - Le fichier d'origine n'est jamais proposé à la place du document corrigé.
  */
 export function ExportPanel({
@@ -83,7 +92,7 @@ export function ExportPanel({
   /** Mise en forme choisie dans le panneau « Mise en forme ». */
   options?: ExportOptions;
   onEditFormatting?: () => void;
-  /** Affiche les points à vérifier manuellement (panneau « Corriger », filtré). */
+  /** Affiche les points à vérifier manuellement (panneau « Revoir les corrections », filtré). */
   onShowManual?: () => void;
 }) {
   const client = useQueryClient();
@@ -160,13 +169,14 @@ export function ExportPanel({
   });
 
   const [downloadError, setDownloadError] = useState<string | null>(null);
-  const [downloaded, setDownloaded] = useState<string | null>(null);
+  // Dernier fichier reçu en entier et transmis au navigateur (jamais avant).
+  const [downloaded, setDownloaded] = useState<{ id: string; fileName: string } | null>(null);
   const download = useMutation({
     mutationFn: (id: string) => api.downloadExport(id),
     onMutate: () => setDownloadError(null),
     onSuccess: ({ blob, fileName }, id) => {
       saveFile(blob, fileName);
-      setDownloaded(id);
+      setDownloaded({ id, fileName });
     },
     onError: (error) => {
       setDownloadError(messageOf(error));
@@ -192,6 +202,7 @@ export function ExportPanel({
   const ready = current?.status === 'READY' && !expired;
   const failed = current?.status === 'FAILED';
   const active = isActiveExport(current) || create.isPending || acceptAll.isPending;
+  const downloading = download.isPending;
   // Le document prêt correspond exactement à ce qui serait demandé maintenant.
   const upToDate = Boolean(ready && current && !stale && pending === 0);
 
@@ -199,14 +210,32 @@ export function ExportPanel({
   // Les choix affichés peuvent être mis à jour un instant après la demande (« Tout
   // corriger » juste avant) : on attend qu'ils correspondent. S'ils ont réellement changé,
   // le document ne les reflète plus et n'est pas téléchargé (« version précédente »).
-  const { mutate: startDownload } = download;
+  // Un seul téléchargement à la fois : un second clic, même avant que le bouton ne soit
+  // marqué occupé, est ignoré (« Télécharger à nouveau », « Réessayer le
+  // téléchargement », « Télécharger la version précédente », téléchargement automatique).
+  const downloadLock = useRef(false);
+  const { mutateAsync: fetchFile } = download;
+  const startDownload = useCallback(
+    async (id: string) => {
+      if (downloadLock.current) return;
+      downloadLock.current = true;
+      try {
+        await fetchFile(id);
+      } catch {
+        // Erreur affichée par `onError`.
+      } finally {
+        downloadLock.current = false;
+      }
+    },
+    [fetchFile],
+  );
   useEffect(() => {
     const pending = autoDownload.current;
     if (!pending || current?.id !== pending.id) return;
     if (current.status === 'FAILED') autoDownload.current = null;
     if (current.status !== 'READY' || pending.signature !== signature) return;
     autoDownload.current = null;
-    if (new Date(current.expiresAt).getTime() > Date.now()) startDownload(current.id);
+    if (new Date(current.expiresAt).getTime() > Date.now()) void startDownload(current.id);
   }, [current, signature, startDownload]);
 
   const showRequest =
@@ -226,15 +255,29 @@ export function ExportPanel({
     !savingDecisions;
   const retry = failed && !stale && pending === 0;
 
+  // Une demande en cours de lancement : un second clic, même très rapproché (avant que
+  // le bouton ne soit désactivé), est ignoré.
+  const starting = useRef(false);
+
   /** Un clic : corrections fiables (si demandé), puis préparation et téléchargement. */
   const start = async () => {
+    if (starting.current) return;
+    starting.current = true;
+    try {
+      await run();
+    } finally {
+      starting.current = false;
+    }
+  };
+  const run = async () => {
     setRequestError(null);
     setAcceptedNotice(null);
+    setDownloadError(null);
     let decided = issues;
     if (pending > 0) {
       try {
         const result = await acceptAll.mutateAsync();
-        // Même lot annulable que « Tout corriger » (panneau « Corriger »).
+        // Même lot annulable que « Tout corriger » (panneau « Revoir les corrections »).
         if (result.acceptedIds.length > 0) writeBatch(analysis.id, result.acceptedIds);
         setAcceptedNotice(result.acceptedIds.length);
         const accepted = new Set(result.acceptedIds);
@@ -249,7 +292,9 @@ export function ExportPanel({
         return;
       }
     }
-    create.mutate(requestSignature(decisionsSignature(decided), options));
+    await create
+      .mutateAsync(requestSignature(decisionsSignature(decided), options))
+      .catch(() => undefined); // Erreur affichée par `onError`.
   };
 
   let status: ReactNode;
@@ -295,6 +340,30 @@ export function ExportPanel({
         }
       />
     );
+  } else if (ready && current && downloading) {
+    status = <Progress text="Téléchargement de votre document corrigé…" />;
+  } else if (ready && current && downloaded?.id === current.id && !stale && !downloadError) {
+    status = (
+      <Notice tone="success" icon={<CircleCheck />}>
+        <p className="font-semibold">
+          Document corrigé téléchargé : {`«\u00a0${downloaded.fileName}\u00a0»`}.
+        </p>
+        <p className="mt-0.5">
+          {current.requestedCount > 0
+            ? `${current.appliedCount} sur ${plural(current.requestedCount, 'correction appliquée', 'corrections appliquées')}.`
+            : 'Mise en forme appliquée.'}{' '}
+          Retrouvez-le dans les téléchargements de votre navigateur et relisez-le dans Word avant de
+          l’envoyer.
+        </p>
+        {current.beautified && (current.options.typography || current.options.layout) ? (
+          <p className="mt-0.5">{beautifiedText(current)}</p>
+        ) : null}
+        <p className="mt-0.5">
+          Rien ne s’est passé ? Cliquez sur «&nbsp;Télécharger à nouveau&nbsp;». Disponible jusqu’au{' '}
+          {formatDate(current.expiresAt)}.
+        </p>
+      </Notice>
+    );
   } else if (ready && current) {
     status = (
       <Notice tone="success" icon={<CircleCheck />}>
@@ -310,12 +379,6 @@ export function ExportPanel({
         </p>
         {current.beautified && (current.options.typography || current.options.layout) ? (
           <p className="mt-0.5">{beautifiedText(current)}</p>
-        ) : null}
-        {downloaded === current.id && !stale ? (
-          <p className="mt-0.5">
-            Téléchargement lancé. Rien ne s’est passé ? Cliquez de nouveau sur{' '}
-            {`«\u00a0${DOWNLOAD_LABEL}\u00a0»`}.
-          </p>
         ) : null}
         <p className="mt-0.5">
           Téléchargeable jusqu’au {formatDate(current.expiresAt)}. Relisez-le dans Word avant de
@@ -334,6 +397,12 @@ export function ExportPanel({
       <Notice tone="error" icon={<TriangleAlert />}>
         <p className="font-semibold">Aucun document corrigé n’a été produit.</p>
         <p className="mt-0.5">{exportFailureText(current.errorCode)}</p>
+        {isRetryableFailure(current.errorCode) && !stale ? (
+          <p className="mt-0.5">
+            Votre analyse et vos choix sont conservés : cliquez sur «&nbsp;Réessayer&nbsp;», inutile
+            d’importer de nouveau votre document.
+          </p>
+        ) : null}
         {current.errorCode === 'EXPORT_NO_APPLICABLE' && !stale ? (
           <p className="mt-0.5">
             Corrigez ces passages directement dans Word, ou modifiez vos choix puis téléchargez de
@@ -359,41 +428,73 @@ export function ExportPanel({
     );
   }
 
+  // Bouton principal. Occupé (préparation, téléchargement) : marqué `aria-disabled` et
+  // sans action, mais pas `disabled`, pour que le focus clavier n'y soit pas perdu.
   const mainButton = active ? (
-    <Button size="lg" disabled>
+    <Button size="lg" aria-disabled="true" className={BUSY} {...PRIMARY}>
       <LoaderCircle className="animate-spin" aria-hidden />
       Préparation de votre document…
     </Button>
   ) : upToDate && current ? (
-    <Button size="lg" onClick={() => download.mutate(current.id)} disabled={download.isPending}>
-      {download.isPending ? (
+    <Button
+      size="lg"
+      {...PRIMARY}
+      aria-disabled={downloading ? 'true' : undefined}
+      className={downloading ? BUSY : undefined}
+      onClick={downloading ? undefined : () => void startDownload(current.id)}
+    >
+      {downloading ? (
         <LoaderCircle className="animate-spin" aria-hidden />
+      ) : downloadError ? (
+        <RefreshCw aria-hidden />
       ) : (
         <Download aria-hidden />
       )}
-      {DOWNLOAD_LABEL}
+      {downloading
+        ? 'Téléchargement…'
+        : downloadError
+          ? 'Réessayer le téléchargement'
+          : downloaded?.id === current.id
+            ? 'Télécharger à nouveau'
+            : 'Télécharger le document corrigé'}
     </Button>
   ) : showRequest ? (
-    <Button size="lg" onClick={() => void start()} disabled={!canRequest}>
+    <Button size="lg" {...PRIMARY} onClick={() => void start()} disabled={!canRequest}>
       {retry ? <RefreshCw aria-hidden /> : <Download aria-hidden />}
       {retry ? 'Réessayer' : DOWNLOAD_LABEL}
     </Button>
   ) : null;
   const previous = ready && current && stale ? current : null;
+
+  // Bouton principal hors de l'écran, plus bas (mobile : la partie supérieure occupe tout
+  // le premier écran) : le même bouton est repris dans une barre fixée en bas de l'écran.
+  const actionRow = useRef<HTMLDivElement>(null);
+  const [actionBelow, setActionBelow] = useState(false);
+  const hasAction = mainButton !== null;
+  useEffect(() => {
+    const row = actionRow.current;
+    if (!hasAction || !row || typeof IntersectionObserver === 'undefined') {
+      setActionBelow(false);
+      return;
+    }
+    const observer = new IntersectionObserver(([entry]) => {
+      if (entry) setActionBelow(!entry.isIntersecting && entry.boundingClientRect.top > 0);
+    });
+    observer.observe(row);
+    return () => observer.disconnect();
+  }, [hasAction]);
   const formatting = (Object.keys(FORMATTING_LABELS) as (keyof ExportOptions)[])
     .filter((key) => options[key])
     .map((key) => FORMATTING_LABELS[key]);
 
-  return (
-    <div>
-      <p className="text-ink-subtle text-sm">
-        Un seul document Word, copie de votre fichier avec les modifications choisies. Votre fichier
-        d’origine n’est jamais modifié.
-      </p>
-
-      {fileState !== 'deleted' ? (
+  const details =
+    fileState !== 'deleted' ? (
+      <details className="border-hairline rounded-control mt-4 border text-sm">
+        <summary className="text-ink cursor-pointer px-4 py-2.5 font-medium">
+          Détails et options
+        </summary>
         <dl
-          className="border-hairline divide-hairline rounded-control mt-4 divide-y border text-sm"
+          className="divide-hairline border-hairline divide-y border-t"
           aria-label="Contenu du document"
         >
           <Row label="Corrections acceptées ou modifiées">
@@ -428,14 +529,26 @@ export function ExportPanel({
             ) : null}
           </Row>
         </dl>
+      </details>
+    ) : null;
+
+  return (
+    <div>
+      {fileState !== 'deleted' ? (
+        <p className="text-ink-muted text-sm" data-testid="export-summary">
+          {summaryText(eligible.length, pending)}
+          {formatting.length > 0 ? `, avec la mise en forme : ${formatting.join(', ')}` : ''}. Vous
+          recevez une copie de votre fichier : l’original n’est jamais modifié.
+        </p>
       ) : null}
 
       {manual > 0 ? (
         <Notice tone="warning" icon={<TriangleAlert />} className="mt-3">
           <p>
-            {plural(manual, 'point demande', 'points demandent')} une vérification de votre part :{' '}
-            {manual > 1 ? 'ils ne sont pas appliqués' : 'il n’est pas appliqué'} automatiquement et
-            {manual > 1 ? ' ne bloquent' : ' ne bloque'} pas le téléchargement.
+            {plural(manual, 'point incertain demande', 'points incertains demandent')} votre
+            vérification :{' '}
+            {manual > 1 ? 'ils ne sont jamais appliqués' : 'il n’est jamais appliqué'}{' '}
+            automatiquement et {manual > 1 ? 'ne bloquent' : 'ne bloque'} pas le téléchargement.
             {onShowManual ? (
               <>
                 {' '}
@@ -453,13 +566,16 @@ export function ExportPanel({
       ) : null}
 
       {mainButton || previous ? (
-        <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+        <div
+          ref={actionRow}
+          className="mt-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center"
+        >
           {mainButton}
           {previous ? (
             <Button
               variant="ghost"
-              onClick={() => download.mutate(previous.id)}
-              disabled={download.isPending}
+              onClick={() => void startDownload(previous.id)}
+              disabled={downloading}
             >
               <Download aria-hidden />
               Télécharger la version précédente
@@ -485,7 +601,7 @@ export function ExportPanel({
           <p className="text-brand-deep text-sm">
             {plural(acceptedNotice, 'correction fiable acceptée', 'corrections fiables acceptées')}{' '}
             pour ce document. Vous pouvez {acceptedNotice > 1 ? 'les' : 'l’'} annuler dans{' '}
-            {'«\u00a0Corriger\u00a0»'}.
+            {'«\u00a0Revoir les corrections\u00a0»'}.
           </p>
         ) : null}
         {showRequest && fileState === 'checking' ? (
@@ -527,11 +643,52 @@ export function ExportPanel({
         ) : null}
       </div>
 
+      {details}
+
+      {actionBelow && mainButton
+        ? createPortal(
+            <div
+              data-testid="barre-action-principale"
+              className="bg-surface/95 border-hairline fixed inset-x-0 bottom-0 z-30 border-t px-4 py-3 shadow-[0_-4px_12px_rgba(15,23,42,0.08)] backdrop-blur"
+            >
+              <div
+                className="mx-auto max-w-7xl [&>button]:w-full sm:[&>button]:w-auto"
+                // Le document se prépare dans la carte : elle est amenée à l'écran et le
+                // focus passe au bouton de la carte (la barre disparaît ensuite).
+                onClickCapture={() => {
+                  const row = actionRow.current;
+                  row?.scrollIntoView({ block: 'center' });
+                  row
+                    ?.querySelector<HTMLButtonElement>(PRIMARY_SELECTOR)
+                    ?.focus({ preventScroll: true });
+                }}
+              >
+                {mainButton}
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
+
       {current && !active && current.skipped.length > 0 ? (
         <SkippedList skipped={current.skipped} issues={issues} />
       ) : null}
     </div>
   );
+}
+
+/** Ce qui sera appliqué au prochain clic, en une phrase. */
+function summaryText(chosen: number, reliable: number): string {
+  const reliableText = plural(reliable, 'correction fiable', 'corrections fiables');
+  const undo = reliable > 1 ? 'annulables' : 'annulable';
+  if (chosen === 0 && reliable === 0) return 'Aucune correction à appliquer pour l’instant';
+  if (reliable === 0) {
+    return plural(chosen, 'correction sera appliquée', 'corrections seront appliquées');
+  }
+  if (chosen === 0) {
+    return `${reliableText} ${reliable > 1 ? 'seront appliquées' : 'sera appliquée'} pour vous (${undo})`;
+  }
+  return `${plural(chosen + reliable, 'correction sera appliquée', 'corrections seront appliquées')} : ${plural(chosen, 'choisie', 'choisies')} par vous et ${reliableText} (${undo})`;
 }
 
 function Row({ label, children }: { label: string; children: ReactNode }) {

@@ -20,7 +20,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AnalysisScreen } from '@/components/analysis/analysis-screen';
 
 /**
- * Écran des résultats en quatre panneaux : vrais composants, vrais hooks et vrai cache
+ * Écran des résultats : action principale « Corriger et télécharger » toujours visible,
+ * puis trois panneaux facultatifs. Vrais composants, vrais hooks et vrai cache
  * React Query ; seule l'API est un serveur en mémoire. Les chiffres affichés sont
  * comparés à l'état du serveur, jamais supposés.
  */
@@ -216,12 +217,21 @@ function renderScreen() {
   );
 }
 
-const actions = () => screen.getByRole('navigation', { name: 'Actions' });
+const actions = () => screen.getByRole('navigation', { name: 'Autres actions' });
 const action = (name: string) => within(actions()).getByRole('button', { name });
 const panel = (id: string) => document.getElementById(`panneau-${id}`) as HTMLElement;
+/** Carte de l'action principale, toujours visible. */
+const card = () => screen.getByRole('region', { name: 'Votre document corrigé' });
+/** Bouton principal, une fois les points chargés. */
+const mainButton = () => within(card()).findByRole('button', { name: 'Corriger et télécharger' });
+/** Ouvre « Détails et options » (repliés par défaut) dans la carte principale. */
+const openDetails = async () => {
+  const summary = await within(card()).findByText('Détails et options');
+  if (!summary.closest('details')?.open) await userEvent.click(summary);
+};
 /** Écran des résultats affiché (analyse chargée). */
-const ready = () => screen.findByRole('navigation', { name: 'Actions' });
-const PANEL_IDS = ['infos', 'corriger', 'mise-en-forme', 'telecharger'];
+const ready = () => screen.findByRole('navigation', { name: 'Autres actions' });
+const PANEL_IDS = ['infos', 'corriger', 'mise-en-forme'];
 const openPanels = () => PANEL_IDS.filter((id) => !panel(id).hidden);
 /** Contenu du presse-papiers simulé (vide s'il n'a jamais été écrit). */
 const clipboardText = () => navigator.clipboard.readText().catch(() => '');
@@ -274,16 +284,112 @@ describe('Partie supérieure et actions', () => {
     );
   });
 
+  it('action principale visible dès le chargement, avant les actions facultatives', async () => {
+    renderScreen();
+    await ready();
+    const button = await mainButton();
+    await waitFor(() => expect(button).toBeEnabled());
+    // Ce qui sera appliqué, en une phrase ; détails et options repliés.
+    expect(within(card()).getByTestId('export-summary')).toHaveTextContent(
+      '2 corrections seront appliquées : 1 choisie par vous et 1 correction fiable (annulable).',
+    );
+    expect(within(card()).getByText('Détails et options').closest('details')).not.toHaveAttribute(
+      'open',
+    );
+    // La carte précède la rangée des actions facultatives.
+    expect(
+      card().compareDocumentPosition(actions()) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(openPanels()).toEqual([]);
+  });
+
+  it('bouton principal hors de l’écran (mobile) : repris en bas de l’écran, même action, une seule demande', async () => {
+    // Le navigateur signale la rangée du bouton principal sous le bas de l'écran.
+    let report: ((entries: Partial<IntersectionObserverEntry>[]) => void) | null = null;
+    const original = window.IntersectionObserver;
+    window.IntersectionObserver = class {
+      constructor(callback: (entries: Partial<IntersectionObserverEntry>[]) => void) {
+        report = callback;
+      }
+      observe() {
+        report?.([{ isIntersecting: false, boundingClientRect: { top: 900 } as DOMRect }]);
+      }
+      disconnect() {}
+    } as unknown as typeof IntersectionObserver;
+    try {
+      renderScreen();
+      await ready();
+      await waitFor(() =>
+        expect(
+          within(card()).getByRole('button', { name: 'Corriger et télécharger' }),
+        ).toBeEnabled(),
+      );
+      const bar = await screen.findByTestId('barre-action-principale');
+      // Hors de la carte (aucun doublon dans la carte), même libellé, même état.
+      expect(card()).not.toContainElement(bar);
+      const barButton = within(bar).getByRole('button', { name: 'Corriger et télécharger' });
+      expect(barButton).toBeEnabled();
+      act(() => {
+        barButton.click();
+        barButton.click();
+      });
+      await waitFor(() => expect(server.createCalls).toBe(1));
+      await new Promise((r) => setTimeout(r, 50));
+      expect(server.acceptCalls).toBe(1);
+      expect(server.createCalls).toBe(1);
+      // La rangée du bouton redevient visible : la barre disparaît.
+      act(() => report?.([{ isIntersecting: true, boundingClientRect: { top: 300 } as DOMRect }]));
+      expect(screen.queryByTestId('barre-action-principale')).toBeNull();
+    } finally {
+      window.IntersectionObserver = original;
+    }
+  });
+
+  it('barre du bas activée au clavier : le focus passe au bouton principal de la carte et y reste', async () => {
+    const user = userEvent.setup();
+    let report: ((entries: Partial<IntersectionObserverEntry>[]) => void) | null = null;
+    const original = window.IntersectionObserver;
+    window.IntersectionObserver = class {
+      constructor(callback: (entries: Partial<IntersectionObserverEntry>[]) => void) {
+        report = callback;
+      }
+      observe() {
+        report?.([{ isIntersecting: false, boundingClientRect: { top: 900 } as DOMRect }]);
+      }
+      disconnect() {}
+    } as unknown as typeof IntersectionObserver;
+    try {
+      renderScreen();
+      await ready();
+      const inline = await mainButton();
+      await waitFor(() => expect(inline).toBeEnabled());
+      const bar = await screen.findByTestId('barre-action-principale');
+      const barButton = within(bar).getByRole('button', { name: 'Corriger et télécharger' });
+      barButton.focus();
+      await user.keyboard('{Enter}');
+      // Focus transféré au bouton de la carte (pas à la barre, pas perdu sur la page).
+      expect(document.activeElement).toBe(inline);
+      expect(card()).toContainElement(document.activeElement as HTMLElement);
+      await waitFor(() => expect(server.createCalls).toBe(1));
+      expect(server.acceptCalls).toBe(1);
+      // La carte est à l'écran : la barre disparaît, le focus reste sur le bouton de la carte,
+      // occupé mais toujours focalisable (jamais `disabled` pendant la préparation).
+      act(() => report?.([{ isIntersecting: true, boundingClientRect: { top: 300 } as DOMRect }]));
+      expect(screen.queryByTestId('barre-action-principale')).toBeNull();
+      expect(document.activeElement).toBe(inline);
+      expect(inline).toHaveAccessibleName('Préparation de votre document…');
+      expect(inline).toHaveAttribute('aria-disabled', 'true');
+      expect(inline).not.toBeDisabled();
+    } finally {
+      window.IntersectionObserver = original;
+    }
+  });
+
   it('aucun panneau ouvert au chargement ; un seul à la fois ; un second clic referme', async () => {
     renderScreen();
-    await screen.findByRole('navigation', { name: 'Actions' });
+    await ready();
     expect(openPanels()).toEqual([]);
-    for (const name of [
-      'Informations sur l’analyse',
-      'Corriger',
-      'Mise en forme',
-      'Télécharger les modifications',
-    ]) {
+    for (const name of ['Informations sur l’analyse', 'Revoir les corrections', 'Mise en forme']) {
       expect(action(name)).toHaveAttribute('aria-expanded', 'false');
     }
 
@@ -325,6 +431,48 @@ describe('Partie supérieure et actions', () => {
     await new Promise((r) => setTimeout(r, 60));
     expect(url.get()).not.toContain('nature=');
     expect(url.get()).toContain('panneau=corriger');
+  });
+});
+
+describe('« Aller à « Corriger et télécharger » » (relecture terminée)', () => {
+  /** Relecture terminée affichée ; `before` attend l'état voulu de la carte avant le clic. */
+  const goTo = async (before: () => Promise<unknown>) => {
+    url.set('panneau=corriger');
+    renderScreen();
+    await ready();
+    const button = await within(panel('corriger')).findByRole('button', {
+      name: /^Aller à «\sCorriger et télécharger\s»$/,
+    });
+    await before();
+    await userEvent.click(button);
+  };
+
+  it('focus sur le bouton principal de la carte, jamais sur un autre bouton', async () => {
+    // Tout est traité : une correction acceptée et une modifiée à appliquer.
+    server.issues = server.issues.map((i, n) => ({
+      ...i,
+      status: i.status === 'edited' ? 'edited' : n === 0 ? 'accepted' : 'ignored',
+    }));
+    const main = () => within(card()).getByRole('button', { name: 'Corriger et télécharger' });
+    await goTo(() => waitFor(() => expect(main()).toBeEnabled()));
+    expect(document.activeElement).toBe(main());
+  });
+
+  it('rien à appliquer (bouton désactivé) : focus sur le titre de la carte, qui l’explique', async () => {
+    server.issues = server.issues.map((i) => ({ ...i, status: 'ignored', userText: null }));
+    await goTo(() =>
+      // Disponibilité du fichier confirmée : seul « rien à appliquer » désactive le bouton.
+      waitFor(() =>
+        expect(
+          within(card()).getByText(/acceptez ou modifiez au moins un point/),
+        ).toBeInTheDocument(),
+      ),
+    );
+    expect(within(card()).getByRole('button', { name: 'Corriger et télécharger' })).toBeDisabled();
+    expect(document.activeElement).toBe(
+      within(card()).getByRole('heading', { name: 'Votre document corrigé' }),
+    );
+    expect(within(card()).getByText(/acceptez ou modifiez au moins un point/)).toBeInTheDocument();
   });
 });
 
@@ -412,20 +560,17 @@ describe('Panneaux', () => {
     expect(screen.queryByText(/reportiez dans Word/)).toBeNull();
   });
 
-  it('Télécharger : corrections fiables incluses par défaut, incertaines jamais ; annulables dans « Corriger »', async () => {
-    url.set('panneau=telecharger');
+  it('« Corriger et télécharger » en un clic, sans ouvrir de panneau : fiables incluses, incertaines jamais ; annulables', async () => {
     renderScreen();
     await ready();
-    const download = panel('telecharger');
+    await openDetails();
     expect(
-      await within(download).findByRole('checkbox', {
-        name: 'Inclure les corrections fiables (1)',
-      }),
+      within(card()).getByRole('checkbox', { name: 'Inclure les corrections fiables (1)' }),
     ).toBeChecked();
     expect(
-      within(download).getByText(/1 point demande une vérification de votre part/),
+      within(card()).getByText(/1 point incertain demande votre vérification/),
     ).toBeInTheDocument();
-    const button = within(download).getByRole('button', { name: 'Télécharger les modifications' });
+    const button = await mainButton();
     await waitFor(() => expect(button).toBeEnabled());
     await userEvent.click(button);
 
@@ -440,15 +585,32 @@ describe('Panneaux', () => {
     ]);
     // Le compteur du haut suit la décision, confirmée par le serveur.
     expect(await screen.findByText('2 / 5 points traités')).toBeInTheDocument();
-    // L'acceptation reste annulable dans « Corriger ».
-    await userEvent.click(action('Corriger'));
+    expect(openPanels()).toEqual([]);
+    // L'acceptation reste annulable dans « Revoir les corrections ».
+    await userEvent.click(action('Revoir les corrections'));
     await userEvent.click(
       await within(panel('corriger')).findByRole('button', { name: 'Annuler « Tout corriger »' }),
     );
     await waitFor(() => expect(server.issues[0]?.status).toBe('open'));
   });
 
-  it('décision lente puis « Télécharger » : la réponse du serveur ne ramène pas sur « Corriger »', async () => {
+  it('double clic sur « Corriger et télécharger » : une seule demande', async () => {
+    renderScreen();
+    await ready();
+    const button = await mainButton();
+    await waitFor(() => expect(button).toBeEnabled());
+    // Deux clics avant tout nouveau rendu (le bouton n'est pas encore désactivé).
+    act(() => {
+      button.click();
+      button.click();
+    });
+    await waitFor(() => expect(server.createCalls).toBe(1));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(server.acceptCalls).toBe(1);
+    expect(server.createCalls).toBe(1);
+  });
+
+  it('décision lente puis « Mise en forme » : la réponse du serveur ne ramène pas sur « Revoir les corrections »', async () => {
     url.set('panneau=corriger');
     renderScreen();
     await ready();
@@ -458,18 +620,18 @@ describe('Panneaux', () => {
     let release!: () => void;
     server.hold = new Promise((resolve) => (release = resolve));
     await userEvent.click(within(detail).getByRole('button', { name: 'Appliquer la correction' }));
-    // L'utilisateur ouvre « Télécharger » avant la réponse du serveur.
-    await userEvent.click(action('Télécharger les modifications'));
-    expect(openPanels()).toEqual(['telecharger']);
+    // L'utilisateur ouvre « Mise en forme » avant la réponse du serveur.
+    await userEvent.click(action('Mise en forme'));
+    expect(openPanels()).toEqual(['mise-en-forme']);
     await act(async () => release());
     await waitFor(() =>
       expect(toasts.messages).toContain(
         'Correction acceptée : elle sera appliquée au document téléchargé.',
       ),
     );
-    expect(openPanels()).toEqual(['telecharger']);
-    expect(url.get()).toContain('panneau=telecharger');
-    // Le point suivant est tout de même sélectionné pour le retour dans « Corriger ».
+    expect(openPanels()).toEqual(['mise-en-forme']);
+    expect(url.get()).toContain('panneau=mise-en-forme');
+    // Le point suivant est tout de même sélectionné pour le retour dans la revue.
     expect(url.get()).toContain('point=iss_b');
   });
 
@@ -507,17 +669,18 @@ describe('Panneaux', () => {
     });
     await userEvent.click(typography);
 
-    // « Télécharger » reprend l'option choisie ; la case est décochée puis on revient.
-    await userEvent.click(action('Télécharger les modifications'));
-    const download = panel('telecharger');
-    expect(within(download).getByText('Typographie française')).toBeInTheDocument();
-    const include = within(download).getByRole('checkbox', {
+    // La carte principale reprend l'option choisie ; la case est décochée.
+    await openDetails();
+    expect(within(card()).getByTestId('export-summary')).toHaveTextContent(
+      'avec la mise en forme : Typographie française',
+    );
+    const include = within(card()).getByRole('checkbox', {
       name: 'Inclure les corrections fiables (1)',
     });
     await userEvent.click(include);
 
-    // Une décision dans « Corriger », sur un autre point que la correction fiable.
-    await userEvent.click(action('Corriger'));
+    // Une décision dans la revue, sur un autre point que la correction fiable.
+    await userEvent.click(action('Revoir les corrections'));
     const list = await within(panel('corriger')).findByRole('navigation', {
       name: 'Points relevés',
     });
@@ -532,14 +695,11 @@ describe('Panneaux', () => {
     expect(
       within(panel('mise-en-forme')).getByRole('checkbox', { name: /Typographie française/ }),
     ).toBeChecked();
-    await userEvent.click(action('Télécharger les modifications'));
     expect(
-      within(panel('telecharger')).getByRole('checkbox', {
-        name: 'Inclure les corrections fiables (1)',
-      }),
+      within(card()).getByRole('checkbox', { name: 'Inclure les corrections fiables (1)' }),
     ).not.toBeChecked();
-    expect(within(panel('telecharger')).getByText('Typographie française')).toBeInTheDocument();
-    await userEvent.click(action('Corriger'));
+    expect(within(card()).getByText('Typographie française')).toBeInTheDocument();
+    await userEvent.click(action('Revoir les corrections'));
     await userEvent.click(within(panel('corriger')).getByRole('button', { name: 'Traités' }));
     const treated = within(panel('corriger')).getByRole('navigation', { name: 'Points relevés' });
     expect(within(treated).getAllByLabelText('Traité')).toHaveLength(2);

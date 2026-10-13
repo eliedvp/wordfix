@@ -16,7 +16,7 @@ const plural = (n: number, one: string, many: string) => `${n} ${n > 1 ? many : 
  * grammaire, ponctuation ; erreurs sûres avec une proposition), sans toucher aux
  * décisions déjà prises, avec annulation. Le fichier Word n'est modifié qu'au moment
  * de télécharger le document (copie, jamais l'original). Le lot annulable est partagé
- * avec « Télécharger les modifications » (`lib/bulk-batch.ts`).
+ * avec « Corriger et télécharger » (`lib/bulk-batch.ts`).
  */
 export function QuickFix({ analysisId, issues }: { analysisId: string; issues: IssueDto[] }) {
   const { acceptAll, undo } = useBulkCorrections(analysisId);

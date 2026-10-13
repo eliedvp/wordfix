@@ -26,7 +26,7 @@ import { Button } from '@/components/ui/button';
 import { useIssues, useUpdateIssue } from '@/lib/hooks/use-issues';
 import { cn } from '@/lib/utils';
 import { AnalysisInfoPanel } from './analysis-info-panel';
-import { ExportPanel, NO_OPTIONS, needsManualCheck } from './export-panel';
+import { ExportPanel, NO_OPTIONS, needsManualCheck, PRIMARY_SELECTOR } from './export-panel';
 import {
   applyFilters,
   CATEGORY_FILTERS,
@@ -54,17 +54,18 @@ const VIEWS: { key: ViewFilter; label: string }[] = [
 /** Les quatre actions sous la partie supérieure ; un seul panneau ouvert à la fois. */
 export const PANELS = [
   { key: 'infos', label: 'Informations sur l’analyse', icon: Info },
-  { key: 'corriger', label: 'Corriger', icon: PencilLine },
+  { key: 'corriger', label: 'Revoir les corrections', icon: PencilLine },
   { key: 'mise-en-forme', label: 'Mise en forme', icon: Pilcrow },
-  { key: 'telecharger', label: 'Télécharger les modifications', icon: Download },
 ] as const satisfies readonly { key: string; label: string; icon: LucideIcon }[];
 export type PanelKey = (typeof PANELS)[number]['key'];
 const PANEL_PARAM = 'panneau';
+const DOWNLOAD_CARD_ID = 'document-corrige';
 
 function parsePanel(params: URLSearchParams): PanelKey | null {
   const value = params.get(PANEL_PARAM);
   if (PANELS.some((panel) => panel.key === value)) return value as PanelKey;
-  // Ancienne adresse avec un point ouvert : ce point est dans « Corriger ».
+  // Ancien panneau « Télécharger » : remplacé par la carte principale, toujours visible.
+  // Ancienne adresse avec un point ouvert : ce point est dans « Revoir les corrections ».
   return params.has('point') ? 'corriger' : null;
 }
 
@@ -91,9 +92,10 @@ async function copy(text: string): Promise<boolean> {
 
 /**
  * Écran des résultats : partie supérieure (score, document, compteurs, progression),
- * puis quatre actions — Informations sur l'analyse, Corriger, Mise en forme,
- * Télécharger les modifications. Une action ouvre son panneau sous la rangée ; un seul
- * panneau à la fois, aucun au chargement. Panneau, filtres et point ouvert sont gardés
+ * puis l'action principale, toujours visible : « Corriger et télécharger » (carte
+ * « Votre document corrigé »). En dessous, trois actions facultatives — Informations
+ * sur l'analyse, Revoir les corrections, Mise en forme — ouvrent chacune son panneau ;
+ * un seul panneau à la fois, aucun au chargement. Panneau, filtres et point ouvert sont gardés
  * dans l'adresse : un rechargement conserve la vue. Les panneaux fermés restent montés
  * (masqués) : un export en cours et les choix en cours ne sont pas perdus.
  */
@@ -174,7 +176,7 @@ export function Workbench({ analysis }: { analysis: AnalysisDto }) {
   );
 
   /**
-   * Sélectionne un point. Un choix de l'utilisateur (liste, J/K) ouvre « Corriger » ;
+   * Sélectionne un point. Un choix de l'utilisateur (liste, J/K) ouvre « Revoir les corrections » ;
    * après une décision, le panneau ouvert à ce moment est conservé : la réponse du
    * serveur peut arriver après que l'utilisateur a ouvert un autre panneau.
    */
@@ -261,7 +263,7 @@ export function Workbench({ analysis }: { analysis: AnalysisDto }) {
     [goToNextOpen, setStatus],
   );
 
-  // Raccourcis clavier (panneau « Corriger » ouvert) : J/K pour naviguer, A accepter,
+  // Raccourcis clavier (panneau « Revoir les corrections » ouvert) : J/K pour naviguer, A accepter,
   // I ignorer, V vérifier.
   useEffect(() => {
     if (panel !== 'corriger') return;
@@ -284,7 +286,7 @@ export function Workbench({ analysis }: { analysis: AnalysisDto }) {
     return () => window.removeEventListener('keydown', onKey);
   }, [act, move, panel, selected]);
 
-  // Compteurs du haut : filtre par nature, dans le panneau « Corriger ».
+  // Compteurs du haut : filtre par nature, dans le panneau « Revoir les corrections ».
   const toggleNature = (nature: IssueNature) => {
     const current = latest.current.filters.natures;
     const natures = current.includes(nature)
@@ -309,6 +311,20 @@ export function Workbench({ analysis }: { analysis: AnalysisDto }) {
       element.scrollIntoView({ block: 'start', behavior: 'smooth' });
     }
   }, [panel]);
+
+  /**
+   * Ramène l'utilisateur à l'action principale : focus sur le bouton principal de la
+   * carte (jamais un autre bouton) ; s'il est désactivé (rien à appliquer), sur le titre
+   * de la carte, qui explique pourquoi.
+   */
+  const goToDownload = () => {
+    const card = document.getElementById(DOWNLOAD_CARD_ID);
+    card?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    const target =
+      card?.querySelector<HTMLElement>(`${PRIMARY_SELECTOR}:not([disabled])`) ??
+      document.getElementById(`${DOWNLOAD_CARD_ID}-titre`);
+    target?.focus({ preventScroll: true });
+  };
 
   const reliable = useMemo(() => all.filter(isReliableCorrection).length, [all]);
   const manual = useMemo(() => all.filter(needsManualCheck).length, [all]);
@@ -349,8 +365,36 @@ export function Workbench({ analysis }: { analysis: AnalysisDto }) {
         showWarnings={false}
       />
 
-      <nav aria-label="Actions" className="mt-6">
-        <ul className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+      <section
+        id={DOWNLOAD_CARD_ID}
+        aria-labelledby={`${DOWNLOAD_CARD_ID}-titre`}
+        className="border-brand/40 bg-surface rounded-card mt-6 scroll-mt-20 border-2 p-5 shadow-sm sm:p-6"
+      >
+        <h2
+          id={`${DOWNLOAD_CARD_ID}-titre`}
+          tabIndex={-1}
+          className="font-display text-ink mb-2 text-lg font-semibold focus:outline-none"
+        >
+          Votre document corrigé
+        </h2>
+        {loading ?? (
+          <ExportPanel
+            key={analysis.id}
+            analysis={analysis}
+            issues={all}
+            options={options}
+            onEditFormatting={() => openPanel('mise-en-forme')}
+            onShowManual={showManual}
+          />
+        )}
+      </section>
+
+      <nav aria-label="Autres actions" className="mt-6">
+        <p className="text-ink-subtle mb-2 text-sm">
+          Facultatif : consultez le détail de l’analyse, revoyez les corrections une à une ou
+          choisissez une mise en forme.
+        </p>
+        <ul className="grid grid-cols-1 gap-2 sm:grid-cols-3">
           {PANELS.map((item) => {
             const open = panel === item.key;
             const Icon = item.icon;
@@ -362,7 +406,7 @@ export function Workbench({ analysis }: { analysis: AnalysisDto }) {
                   aria-controls={`panneau-${item.key}`}
                   onClick={() => togglePanel(item.key)}
                   className={cn(
-                    'rounded-control flex h-full w-full items-center gap-2 border px-3 py-3 text-left text-[13px] leading-tight font-semibold transition-colors sm:gap-2.5 sm:px-4 sm:text-sm',
+                    'rounded-control flex h-full w-full items-center gap-2 border px-3 py-2.5 text-left text-sm leading-tight font-medium transition-colors sm:gap-2.5 sm:px-4',
                     open
                       ? 'border-brand bg-brand text-white shadow-sm'
                       : 'border-hairline bg-surface text-ink hover:border-brand/60 hover:bg-brand-soft/40',
@@ -393,7 +437,7 @@ export function Workbench({ analysis }: { analysis: AnalysisDto }) {
         )}
       </Panel>
 
-      <Panel id="corriger" title="Corriger" open={panel === 'corriger'}>
+      <Panel id="corriger" title="Revoir les corrections" open={panel === 'corriger'}>
         {loading ?? (
           <div className="space-y-6">
             <div className="space-y-3">
@@ -493,7 +537,7 @@ export function Workbench({ analysis }: { analysis: AnalysisDto }) {
                   analysis={analysis}
                   view={filters.view}
                   filtered={filters.category !== 'all' || filters.natures.length > 0}
-                  onDownload={() => openPanel('telecharger')}
+                  onDownload={goToDownload}
                 />
               ) : (
                 <div className="mt-4 grid gap-6 lg:grid-cols-[minmax(0,380px)_1fr]">
@@ -545,19 +589,6 @@ export function Workbench({ analysis }: { analysis: AnalysisDto }) {
             onChange={setOptions}
             onShowStructure={() => showCategory('structure')}
             structure={issuesQuery.data?.structure}
-          />
-        )}
-      </Panel>
-
-      <Panel id="telecharger" title="Télécharger les modifications" open={panel === 'telecharger'}>
-        {loading ?? (
-          <ExportPanel
-            key={analysis.id}
-            analysis={analysis}
-            issues={all}
-            options={options}
-            onEditFormatting={() => openPanel('mise-en-forme')}
-            onShowManual={showManual}
           />
         )}
       </Panel>
@@ -620,7 +651,7 @@ function EmptyState({
       {finished ? (
         <Button className="mt-4" onClick={onDownload}>
           <Download aria-hidden />
-          Passer au téléchargement
+          Aller à «&nbsp;Corriger et télécharger&nbsp;»
         </Button>
       ) : null}
     </div>

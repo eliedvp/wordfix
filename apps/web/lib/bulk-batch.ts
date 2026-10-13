@@ -3,7 +3,7 @@
 /**
  * Points acceptés par le dernier « Tout corriger », gardés pour la durée de l'onglet
  * (stockage de session) : ils permettent d'annuler ce « Tout corriger ». Partagé
- * entre le panneau « Corriger » et le panneau « Télécharger » (qui peut lancer
+ * entre le panneau « Revoir les corrections » et « Corriger et télécharger » (qui peut lancer
  * « Tout corriger » juste avant l'export) : chaque écriture prévient les abonnés.
  */
 const storageKey = (analysisId: string) => `wordfix.bulk.${analysisId}`;

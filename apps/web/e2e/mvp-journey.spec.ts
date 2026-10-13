@@ -22,9 +22,10 @@ test.describe('Parcours complet du MVP', () => {
     await page.getByRole('button', { name: /Lancer l’analyse \(\d+ pages?\)/ }).click();
     await expect(page.getByText('sur 100')).toBeVisible({ timeout: 30_000 });
 
-    // Tout corriger (panneau « Corriger ») : accepté en une action, annulé, puis refait.
-    const actions = page.getByRole('navigation', { name: 'Actions' });
-    await actions.getByRole('button', { name: 'Corriger' }).click();
+    // Tout corriger (panneau « Revoir les corrections ») : accepté en une action, annulé,
+    // puis refait.
+    const actions = page.getByRole('navigation', { name: 'Autres actions' });
+    await actions.getByRole('button', { name: 'Revoir les corrections' }).click();
     const quickFix = page.getByRole('region', { name: 'Correction rapide' });
     const fixAll = quickFix.getByRole('button', { name: /^Tout corriger \(\d+\)$/ });
     await expect(fixAll).toBeVisible();
@@ -59,16 +60,18 @@ test.describe('Parcours complet du MVP', () => {
     await expect(row('Pagination')).toContainText('ne recalcule pas la pagination');
     await formatting.getByRole('checkbox', { name: /Typographie française/ }).check();
     await formatting.getByRole('checkbox', { name: /Harmonisation de la présentation/ }).check();
-    await actions.getByRole('button', { name: 'Télécharger les modifications' }).click();
-    const panel = page.getByRole('region', { name: 'Télécharger les modifications' });
+    const panel = page.getByRole('region', { name: 'Votre document corrigé' });
     await expect(
-      panel.getByText('Typographie française · Harmonisation de la présentation'),
+      panel.getByText(
+        /avec la mise en forme : Typographie française, Harmonisation de la présentation/,
+      ),
     ).toBeVisible();
     const downloading = page.waitForEvent('download', { timeout: 30_000 });
-    await panel.getByRole('button', { name: 'Télécharger les modifications' }).click();
+    await panel.getByRole('button', { name: 'Corriger et télécharger' }).click();
     const download = await downloading;
+    await expect(panel.getByText(/Document corrigé téléchargé/)).toBeVisible();
     await expect(
-      panel.getByText(new RegExp(`Document prêt : \\d+ sur ${count} corrections? appliquées?`)),
+      panel.getByText(new RegExp(`\\d+ sur ${count} corrections? appliquées?`)),
     ).toBeVisible();
     await expect(panel.getByText(/^Mise en forme : /)).toBeVisible();
     expect(download.suggestedFilename()).toMatch(/\(corrigé\)\.docx$/);
