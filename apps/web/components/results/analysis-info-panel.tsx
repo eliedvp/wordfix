@@ -17,7 +17,7 @@ const plural = (n: number, one: string, many: string) => `${n} ${n > 1 ? many : 
 /**
  * « Informations sur l'analyse » : avertissements de l'analyse, puis problèmes
  * détectés par catégorie et par type (chiffres tirés de la liste réelle des points),
- * avec un accès direct aux points concernés dans « Corriger ».
+ * avec un accès direct aux points concernés dans « Revoir les corrections ».
  */
 export function AnalysisInfoPanel({
   analysis,

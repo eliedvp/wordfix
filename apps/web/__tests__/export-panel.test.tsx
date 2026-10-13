@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import {
   type AcceptReliableResultDto,
@@ -22,7 +22,7 @@ import { decisionsSignature, exportableIssues, requestSignature } from '@/lib/ex
 import { useIssues } from '@/lib/hooks/use-issues';
 
 /**
- * Panneaux « Mise en forme » et « Télécharger les modifications » : vrais composants et
+ * « Mise en forme » et l'action principale « Corriger et télécharger » : vrais composants et
  * vrai cache React Query ; seule l'API est simulée. Le téléchargement ne peut viser que
  * la route d'export, et seulement un document prêt correspondant aux choix affichés.
  */
@@ -42,6 +42,8 @@ const server = vi.hoisted(() => ({
   createError: null as ApiError | null,
   getError: null as ApiError | null,
   downloadError: null as ApiError | null,
+  /** Réception du fichier retenue tant que cette promesse n'est pas résolue. */
+  holdDownload: null as Promise<void> | null,
   downloads: [] as string[],
   /** Points connus du serveur pour « Tout corriger » (même règle partagée que l'API). */
   issues: [] as IssueDto[],
@@ -97,13 +99,14 @@ vi.mock('@/lib/api/endpoints', async (importOriginal) => {
           analysis: { id: 'ana_1', reviewedCount: ids.length, issueCount: server.issues.length },
         });
       },
-      downloadExport: (id: string) => {
+      downloadExport: async (id: string) => {
         server.downloads.push(id);
-        if (server.downloadError) return Promise.reject(server.downloadError);
-        return Promise.resolve({
+        await server.holdDownload;
+        if (server.downloadError) throw server.downloadError;
+        return {
           blob: new Blob(['corrigé'], { type: 'application/octet-stream' }),
           fileName: 'Rapport (corrigé).docx',
-        });
+        };
       },
     },
   };
@@ -227,13 +230,24 @@ function renderPanel(issues: IssueDto[]) {
 const signatureOf = (issues: IssueDto[]) =>
   requestSignature(decisionsSignature(issues), { typography: false, layout: false });
 
-/** Bouton unique « Télécharger les modifications » (préparer puis télécharger). */
+/** Bouton principal « Corriger et télécharger » (préparer puis télécharger). */
 const mainButton = () => screen.queryByRole('button', { name: DOWNLOAD_LABEL });
 /** Clique sur le bouton principal dès qu'il est utilisable (fichier d'origine confirmé). */
 const clickMain = async () => {
   const button = await screen.findByRole('button', { name: DOWNLOAD_LABEL });
   await waitFor(() => expect(button).toBeEnabled());
   await userEvent.click(button);
+};
+/** Bouton d'un document prêt (déjà préparé), selon l'état du téléchargement. */
+const readyButton = (
+  name:
+    | string
+    | RegExp = /^(Télécharger le document corrigé|Télécharger à nouveau|Réessayer le téléchargement)$/,
+) => screen.findByRole('button', { name });
+/** Détails repliés par défaut : ouverts pour lire le récapitulatif ou la case. */
+const openDetails = async () => {
+  const summary = await screen.findByText('Détails et options');
+  if (!summary.closest('details')?.open) await userEvent.click(summary);
 };
 /** Aucun fichier n'a été demandé ni enregistré. */
 const nothingDownloaded = () => {
@@ -254,6 +268,7 @@ beforeEach(() => {
     createError: null,
     getError: null,
     downloadError: null,
+    holdDownload: null,
     downloads: [],
     issues: [],
     acceptCalls: 0,
@@ -295,7 +310,7 @@ describe('Règles du document corrigé', () => {
   });
 });
 
-describe('Panneau « Télécharger les modifications »', () => {
+describe('Action principale « Corriger et télécharger »', () => {
   it('aucune modification choisie : téléchargement impossible, explication', async () => {
     renderPanel([issue('iss_c', 'ignored'), issue('iss_d', 'open', { confidence: 'low' })]);
     expect(await screen.findByText(/acceptez ou modifiez au moins un point/)).toBeInTheDocument();
@@ -307,15 +322,22 @@ describe('Panneau « Télécharger les modifications »', () => {
   it('un clic : attente, préparation puis téléchargement automatique du seul document corrigé', async () => {
     server.sequence = [exportDto('QUEUED'), exportDto('RUNNING'), exportDto('READY')];
     renderPanel(decided());
-    expect(
-      (await screen.findByText('Corrections acceptées ou modifiées')).nextSibling,
-    ).toHaveTextContent('2 corrections');
+    expect(await screen.findByTestId('export-summary')).toHaveTextContent(
+      '2 corrections seront appliquées.',
+    );
+    await openDetails();
+    expect(screen.getByText('Corrections acceptées ou modifiées').nextSibling).toHaveTextContent(
+      '2 corrections',
+    );
     await clickMain();
     expect(server.createCalls).toBe(1);
 
     expect(await screen.findByText(/en attente de préparation/)).toBeInTheDocument();
-    // Pendant la préparation : bouton occupé, aucun téléchargement.
-    expect(screen.getByRole('button', { name: 'Préparation de votre document…' })).toBeDisabled();
+    // Pendant la préparation : bouton occupé (focus conservé, aucune action), aucun téléchargement.
+    const busy = screen.getByRole('button', { name: 'Préparation de votre document…' });
+    expect(busy).toHaveAttribute('aria-disabled', 'true');
+    await userEvent.click(busy);
+    expect(server.createCalls).toBe(1);
     nothingDownloaded();
     expect(
       await screen.findByText(
@@ -326,22 +348,23 @@ describe('Panneau « Télécharger les modifications »', () => {
     ).toBeInTheDocument();
     nothingDownloaded();
 
+    // Réussite annoncée seulement une fois le fichier reçu et transmis au navigateur.
     expect(
       await screen.findByText(
-        /Document prêt : 2 sur 2 corrections appliquées/,
+        /Document corrigé téléchargé : «\sRapport \(corrigé\)\.docx\s»\./,
         {},
         { timeout: 5000 },
       ),
     ).toBeInTheDocument();
+    expect(screen.getByText(/2 sur 2 corrections appliquées/)).toBeInTheDocument();
     // Téléchargé une seule fois, automatiquement, depuis la route d'export.
-    await waitFor(() => expect(saved.files).toHaveLength(1));
+    expect(saved.files).toHaveLength(1);
     expect(server.downloads).toEqual(['exp_1']);
     expect(saved.files[0]?.fileName).toBe('Rapport (corrigé).docx');
-    expect(screen.getByText(/Téléchargement lancé\. Rien ne s’est passé/)).toBeInTheDocument();
     await new Promise((r) => setTimeout(r, 50));
     expect(server.downloads).toEqual(['exp_1']);
     // Le document prêt correspond aux choix : un nouveau clic retélécharge, sans demande.
-    await clickMain();
+    await userEvent.click(await readyButton('Télécharger à nouveau'));
     await waitFor(() => expect(saved.files).toHaveLength(2));
     expect(server.downloads).toEqual(['exp_1', 'exp_1']);
     expect(server.createCalls).toBe(1);
@@ -416,6 +439,10 @@ describe('Panneau « Télécharger les modifications »', () => {
       nothingDownloaded();
       expect(mainButton()).toBeNull();
       expect(screen.queryByRole('button', { name: 'Réessayer' }) !== null).toBe(retry);
+      // Nouvel essai possible : l'analyse et les choix sont conservés.
+      expect(screen.queryByText(/inutile d’importer de nouveau votre document/) !== null).toBe(
+        retry,
+      );
       if (retry) {
         await userEvent.click(screen.getByRole('button', { name: 'Réessayer' }));
         expect(server.createCalls).toBe(2);
@@ -427,7 +454,7 @@ describe('Panneau « Télécharger les modifications »', () => {
     server.sequence = [exportDto('READY')];
     const { update } = renderPanel(decided());
     await clickMain();
-    await screen.findByText(/Document prêt/);
+    await screen.findByText(/Document corrigé téléchargé/);
     update(decided().map((i) => (i.id === 'iss_d' ? { ...i, status: 'accepted' as const } : i)));
     expect(
       await screen.findByText(/Vos choix ont changé depuis la génération/),
@@ -462,6 +489,82 @@ describe('Panneau « Télécharger les modifications »', () => {
     expect(await screen.findByText(/n'est plus disponible/)).toBeInTheDocument();
     expect(server.downloads).toEqual(['exp_1']);
     expect(saved.files).toHaveLength(0);
+    expect(screen.queryByText(/Document corrigé téléchargé/)).toBeNull();
+  });
+
+  it('téléchargement en cours puis échec réseau : jamais annoncé réussi ; nouvel essai sans nouvelle demande', async () => {
+    server.sequence = [exportDto('READY')];
+    let release!: () => void;
+    server.holdDownload = new Promise((resolve) => (release = resolve));
+    server.downloadError = new ApiError('NETWORK_ERROR', 'Connexion interrompue.', 0);
+    renderPanel(decided());
+    await clickMain();
+    // Fichier en cours de réception : état distinct, bouton occupé, aucune réussite.
+    expect(
+      await screen.findByText('Téléchargement de votre document corrigé…'),
+    ).toBeInTheDocument();
+    const receiving = screen.getByRole('button', { name: 'Téléchargement…' });
+    expect(receiving).toHaveAttribute('aria-disabled', 'true');
+    // Activé pendant la réception : aucun second téléchargement.
+    await userEvent.click(receiving);
+    expect(server.downloads).toEqual(['exp_1']);
+    expect(screen.queryByText(/Document corrigé téléchargé/)).toBeNull();
+    release();
+    expect(await screen.findByText('Connexion interrompue.')).toBeInTheDocument();
+    expect(saved.files).toHaveLength(0);
+    expect(screen.queryByText(/Document corrigé téléchargé/)).toBeNull();
+    // Nouvel essai : même document, aucune nouvelle demande d'export.
+    server.holdDownload = null;
+    server.downloadError = null;
+    // Double clic sur « Réessayer le téléchargement » : un seul téléchargement.
+    const retry = await readyButton('Réessayer le téléchargement');
+    act(() => {
+      retry.click();
+      retry.click();
+    });
+    expect(await screen.findByText(/Document corrigé téléchargé/)).toBeInTheDocument();
+    expect(saved.files).toHaveLength(1);
+    expect(server.createCalls).toBe(1);
+    expect(server.downloads).toEqual(['exp_1', 'exp_1']);
+    expect(screen.queryByText('Connexion interrompue.')).toBeNull();
+  });
+
+  it('double clic sur « Télécharger à nouveau » : un seul téléchargement', async () => {
+    server.sequence = [exportDto('READY')];
+    renderPanel(decided());
+    await clickMain();
+    await screen.findByText(/Document corrigé téléchargé/);
+    expect(server.downloads).toEqual(['exp_1']);
+    const again = await readyButton('Télécharger à nouveau');
+    // Deux clics avant tout nouveau rendu (le bouton n'est pas encore marqué occupé).
+    act(() => {
+      again.click();
+      again.click();
+    });
+    await waitFor(() => expect(saved.files).toHaveLength(2));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(server.downloads).toEqual(['exp_1', 'exp_1']);
+    expect(saved.files).toHaveLength(2);
+  });
+
+  it('double clic sur « Télécharger la version précédente » : un seul téléchargement', async () => {
+    server.sequence = [exportDto('READY')];
+    const { update } = renderPanel(decided());
+    await clickMain();
+    await screen.findByText(/Document corrigé téléchargé/);
+    update(decided().map((i) => (i.id === 'iss_d' ? { ...i, status: 'accepted' as const } : i)));
+    const previous = await screen.findByRole('button', {
+      name: 'Télécharger la version précédente',
+    });
+    act(() => {
+      previous.click();
+      previous.click();
+    });
+    await waitFor(() => expect(saved.files).toHaveLength(2));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(server.downloads).toEqual(['exp_1', 'exp_1']);
+    expect(saved.files).toHaveLength(2);
+    expect(server.createCalls).toBe(1);
   });
 
   it('document corrigé expiré : jamais téléchargé', async () => {
@@ -497,7 +600,9 @@ describe('Panneau « Télécharger les modifications »', () => {
     expect(await screen.findByText(/Document prêt/)).toBeInTheDocument();
     expect(server.createCalls).toBe(0);
     nothingDownloaded();
-    expect(mainButton()).toBeEnabled();
+    // Jamais annoncé comme téléchargé tant que le fichier n'a pas été reçu.
+    expect(screen.queryByText(/Document corrigé téléchargé/)).toBeNull();
+    expect(await readyButton('Télécharger le document corrigé')).toBeEnabled();
   });
 
   it('export suivi introuvable (404) : oublié, une nouvelle demande est possible', async () => {
@@ -594,10 +699,11 @@ describe('Panneau « Télécharger les modifications »', () => {
     );
     await clickMain();
     expect(server.createOptions).toEqual([{ typography: true, layout: false }]);
-    expect(await screen.findByText('Document prêt : mise en forme appliquée.')).toBeInTheDocument();
+    expect(await screen.findByText(/Document corrigé téléchargé/)).toBeInTheDocument();
+    expect(screen.getByText(/^Mise en forme appliquée\./)).toBeInTheDocument();
     expect(screen.getByText('Mise en forme : 3 corrections typographiques.')).toBeInTheDocument();
-    await waitFor(() => expect(saved.files).toHaveLength(1));
-    expect(mainButton()).toBeEnabled();
+    expect(saved.files).toHaveLength(1);
+    expect(await readyButton('Télécharger à nouveau')).toBeEnabled();
   });
 
   it('mise en forme sur un document déjà conforme : message clair, aucun téléchargement', async () => {
@@ -625,7 +731,7 @@ describe('Panneau « Télécharger les modifications »', () => {
     server.sequence = [exportDto('READY')];
     renderPanel(decided());
     await clickMain();
-    await screen.findByText(/Document prêt/);
+    await screen.findByText(/Document corrigé téléchargé/);
     await userEvent.click(
       screen.getByRole('checkbox', { name: /Harmonisation de la présentation/ }),
     );
@@ -683,6 +789,34 @@ describe('Corrections fiables au téléchargement', () => {
     expect(server.issues.find((i) => i.id === 'iss_r')?.status).toBe('open');
   });
 
+  it('corrections fiables acceptées, préparation en échec puis « Réessayer » : aucune seconde acceptation', async () => {
+    server.sequence = [exportDto('FAILED', { errorCode: 'EXPORT_TIMEOUT' })];
+    renderLive(mixed());
+    await clickMain();
+    expect(await screen.findByText(/a pris trop de temps/)).toBeInTheDocument();
+    expect(server.acceptCalls).toBe(1);
+    expect(server.createCalls).toBe(1);
+    const statuses = () => server.issues.map((i) => [i.id, i.status]);
+    const afterFirst = statuses();
+    expect(afterFirst).toEqual([
+      ['iss_r', 'accepted'],
+      ['iss_u', 'open'],
+      ['iss_v', 'open'],
+      ['iss_e', 'edited'],
+    ]);
+    nothingDownloaded();
+
+    // Nouvel essai : la préparation aboutit cette fois.
+    server.sequence = [exportDto('READY')];
+    await userEvent.click(await screen.findByRole('button', { name: 'Réessayer' }));
+    expect(await screen.findByText(/Document corrigé téléchargé/)).toBeInTheDocument();
+    expect(server.createCalls).toBe(2);
+    // Les corrections fiables ne sont pas acceptées une seconde fois ; décisions inchangées.
+    expect(server.acceptCalls).toBe(1);
+    expect(statuses()).toEqual(afterFirst);
+    expect(saved.files).toHaveLength(1);
+  });
+
   it('acceptation refusée par le serveur : message, aucun export demandé', async () => {
     server.acceptError = new ApiError('NETWORK_ERROR', 'Connexion impossible.', 0);
     renderLive(mixed());
@@ -706,7 +840,7 @@ describe('Corrections fiables au téléchargement', () => {
   it('points à vérifier manuellement : signalés, sans bloquer le téléchargement', async () => {
     renderLive(mixed());
     expect(
-      await screen.findByText(/1 point demande une vérification de votre part/),
+      await screen.findByText(/1 point incertain demande votre vérification/),
     ).toBeInTheDocument();
     expect(screen.getByText(/ne bloque pas le téléchargement/)).toBeInTheDocument();
     await waitFor(() => expect(mainButton()).toBeEnabled());

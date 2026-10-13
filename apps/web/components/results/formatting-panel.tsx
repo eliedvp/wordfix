@@ -249,7 +249,7 @@ export function FormattingPanel({
   structure?: DocumentStructureDto | null;
   options: ExportOptions;
   onChange: (options: ExportOptions) => void;
-  /** Affiche les points de structure (panneau « Corriger », filtré). */
+  /** Affiche les points de structure (panneau « Revoir les corrections », filtré). */
   onShowStructure: () => void;
 }) {
   const structure = issues.filter((issue) => issue.category === 'structure');

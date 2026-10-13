@@ -24,18 +24,19 @@ test.describe('Parcours principal', () => {
       ).toBeVisible();
     }
 
-    // Aucun panneau ouvert au chargement ; « Corriger » ouvre la liste et le détail.
-    const actions = page.getByRole('navigation', { name: 'Actions' });
-    for (const name of [
-      'Informations sur l’analyse',
-      'Corriger',
-      'Mise en forme',
-      'Télécharger les modifications',
-    ]) {
+    // Action principale visible ; aucun panneau ouvert au chargement ; « Revoir les
+    // corrections » ouvre la liste et le détail.
+    await expect(
+      page
+        .getByRole('region', { name: 'Votre document corrigé' })
+        .getByRole('button', { name: 'Corriger et télécharger' }),
+    ).toBeVisible();
+    const actions = page.getByRole('navigation', { name: 'Autres actions' });
+    for (const name of ['Informations sur l’analyse', 'Revoir les corrections', 'Mise en forme']) {
       await expect(actions.getByRole('button', { name })).toHaveAttribute('aria-expanded', 'false');
     }
     await expect(page.getByRole('article', { name: 'Détail du point' })).toBeHidden();
-    await actions.getByRole('button', { name: 'Corriger' }).click();
+    await actions.getByRole('button', { name: 'Revoir les corrections' }).click();
 
     // « Copier » : explicite, sans rien décider.
     const detail = page.getByRole('article', { name: 'Détail du point' });
